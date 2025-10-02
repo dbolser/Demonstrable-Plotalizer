@@ -12,6 +12,8 @@ interface ControlPanelProps {
   showHistograms: boolean;
   setShowHistograms: (show: boolean) => void;
   labelColumn: string | null;
+  columnFilter: string;
+  onColumnFilterChange: (filter: string) => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -23,6 +25,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   showHistograms,
   setShowHistograms,
   labelColumn,
+  columnFilter,
+  onColumnFilterChange,
 }) => {
   
   const handleDownloadSVG = () => {
@@ -56,6 +60,28 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 Using column <span className="font-semibold">"{labelColumn}"</span> for point labels.
             </p>
         )}
+      </div>
+
+      <div>
+        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Column Filter</h2>
+        <div className="space-y-3">
+          <div>
+            <label htmlFor="columnFilter" className="block text-sm font-medium text-gray-700 mb-1">Filter Columns</label>
+            <input
+              id="columnFilter"
+              type="text"
+              value={columnFilter}
+              onChange={(e) => onColumnFilterChange(e.target.value)}
+              placeholder="Type to filter columns (e.g. mac1, n_snps)"
+              className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-brand-secondary focus:border-brand-secondary text-sm"
+            />
+            {columnFilter && (
+              <p className="text-xs text-gray-500 mt-1">
+                Showing {columns.filter(col => col.visible).length} of {columns.length} columns
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       <div>
