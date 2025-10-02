@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useMemo } from 'react';
+import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { useDrag, useDrop } from 'react-dnd';
 import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
@@ -66,6 +66,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onPointLeave
 }) => {
   const ref = useRef<SVGSVGElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const size = 150;
   const padding = 20;
 
@@ -96,6 +97,109 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const selectedIds = useMemo(() => {
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
+
+  // Spatial grid for fast brush selection
+  const createSpatialGrid = useCallback((data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string) => {
+    const gridSize = 20; // 20x20 grid
+    const grid: DataPoint[][][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(null).map(() => []));
+
+    data.forEach(d => {
+      const x = +d[xCol];
+      const y = +d[yCol];
+      if (!isFinite(x) || !isFinite(y)) return;
+
+      const screenX = xScale(x);
+      const screenY = yScale(y);
+      const gridX = Math.floor((screenX - padding/2) / (size - padding) * gridSize);
+      const gridY = Math.floor((screenY - padding/2) / (size - padding) * gridSize);
+
+      if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
+        grid[gridX][gridY].push(d);
+      }
+    });
+
+    return grid;
+  }, [size, padding]);
+
+  // Fast brush selection using spatial grid
+  const getPointsInBrush = useCallback((grid: DataPoint[][][], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, x0: number, y0: number, x1: number, y1: number, xCol: string, yCol: string) => {
+    const gridSize = 20;
+    const selectedIds = new Set<number>();
+
+    const startGridX = Math.max(0, Math.floor((x0 - padding/2) / (size - padding) * gridSize));
+    const endGridX = Math.min(gridSize - 1, Math.floor((x1 - padding/2) / (size - padding) * gridSize));
+    const startGridY = Math.max(0, Math.floor((y0 - padding/2) / (size - padding) * gridSize));
+    const endGridY = Math.min(gridSize - 1, Math.floor((y1 - padding/2) / (size - padding) * gridSize));
+
+    for (let gx = startGridX; gx <= endGridX; gx++) {
+      for (let gy = startGridY; gy <= endGridY; gy++) {
+        grid[gx][gy].forEach(d => {
+          const x = +d[xCol];
+          const y = +d[yCol];
+          const screenX = xScale(x);
+          const screenY = yScale(y);
+
+          if (screenX >= x0 && screenX <= x1 && screenY >= y0 && screenY <= y1) {
+            selectedIds.add(d.__id);
+          }
+        });
+      }
+    }
+
+    return selectedIds;
+  }, [size, padding]);
+
+  // Canvas rendering function
+  const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, size, size);
+
+    // Render non-selected points first
+    if (filterMode === 'highlight' || selectedIds.size === 0) {
+      ctx.fillStyle = selectedIds.size > 0 ? '#ccc' : '#4b5563';
+      ctx.globalAlpha = selectedIds.size > 0 ? 0.3 : 0.7;
+
+      data.forEach(d => {
+        if (selectedIds.size > 0 && selectedIds.has(d.__id)) return;
+
+        const x = +d[xCol];
+        const y = +d[yCol];
+        if (!isFinite(x) || !isFinite(y)) return;
+
+        const screenX = xScale(x);
+        const screenY = yScale(y);
+
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, 2.5, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+    }
+
+    // Render selected points on top
+    if (selectedIds.size > 0) {
+      ctx.fillStyle = '#1e40af';
+      ctx.globalAlpha = 0.8;
+
+      data.forEach(d => {
+        if (!selectedIds.has(d.__id)) return;
+
+        const x = +d[xCol];
+        const y = +d[yCol];
+        if (!isFinite(x) || !isFinite(y)) return;
+
+        const screenX = xScale(x);
+        const screenY = yScale(y);
+
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, 2.5, 0, 2 * Math.PI);
+        ctx.fill();
+      });
+    }
+
+    ctx.globalAlpha = 1;
+  }, [size]);
 
   const { filteredData, selectedData } = useMemo(() => {
     const selected = data.filter(d => selectedIds.has(d.__id));
@@ -184,41 +288,46 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const colY = columns[j_original];
         if (!colX || !colY) return;
 
-        const newSelectedIds = new Set<number>();
-        for (const d of data) {
-            const valX = +d[colX.name];
-            const valY = +d[colY.name];
-            if (valX >= xScales[i_visible].invert(x0) && valX <= xScales[i_visible].invert(x1) &&
-                valY >= yScales[j_visible].invert(y1) && valY <= yScales[j_visible].invert(y0)) {
-                newSelectedIds.add(d.__id);
-            }
-        }
+        // Create spatial grid for fast selection
+        const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name);
+        const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
     });
 
     brushableCells.call(brush);
     
+    // Create canvas elements for point rendering
+    if (!canvasContainerRef.current) return;
+
+    // Clear existing canvases
+    canvasContainerRef.current.innerHTML = '';
+
     brushableCells.each(function ([i, j]) {
         const i_original = visibleIndexToOriginalIndex.get(i);
         const j_original = visibleIndexToOriginalIndex.get(j);
         if (i_original === undefined || j_original === undefined) return;
-        
-        d3.select(this).selectAll("circle")
-          .data(filteredData)
-          .join("circle")
-          .attr("cx", d => xScales[i](+d[columns[i_original].name])!)
-          .attr("cy", d => yScales[j](+d[columns[j_original].name])!)
-          .attr("r", 2.5)
-          .attr("fill", d => selectedIds.size > 0 ? (selectedIds.has(d.__id) ? '#1e40af' : '#ccc') : '#4b5563')
-          .attr("fill-opacity", d => selectedIds.size > 0 ? (selectedIds.has(d.__id) ? 0.8 : 0.3) : 0.7)
-          .on('mouseover', (event, d) => {
-              if (labelColumn) {
-                  onPointHover(String(d[labelColumn]), event);
-              }
-          })
-          .on('mouseout', () => {
-              onPointLeave();
-          });
+
+        // Create canvas for this cell
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        canvas.style.position = 'absolute';
+        canvas.style.left = `${i * size}px`;
+        canvas.style.top = `${j * size}px`;
+        canvas.style.pointerEvents = 'none';
+        canvasContainerRef.current!.appendChild(canvas);
+
+        // Render points to canvas
+        renderPointsToCanvas(
+          canvas,
+          filteredData,
+          xScales[i],
+          yScales[j],
+          columns[i_original].name,
+          columns[j_original].name,
+          selectedIds,
+          filterMode
+        );
       });
       
     const diagonalCells = cell.filter(([i, j]) => i === j);
@@ -256,10 +365,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             if (!event.selection) { onBrush(null); return; }
 
             const [x0, x1] = event.selection;
+            // Faster selection for histogram brush
             const newSelectedIds = new Set<number>();
+            const minVal = xScales[i_visible].invert(x0);
+            const maxVal = xScales[i_visible].invert(x1);
             for (const d of data) {
                 const val = +d[columns[i_original].name];
-                if (val >= xScales[i_visible].invert(x0) && val <= xScales[i_visible].invert(x1)) newSelectedIds.add(d.__id);
+                if (val >= minVal && val <= maxVal) newSelectedIds.add(d.__id);
             }
             onBrush({ indexX: i_original, indexY: columns.length, x0, y0: padding/2, x1, y1: size - padding/2, selectedIds: newSelectedIds });
         });
@@ -318,9 +430,12 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
           const [y0, y1] = event.selection;
           const newSelectedIds = new Set<number>();
+          // Faster selection for Y histogram brush
+          const minVal = yScales[j_visible].invert(y1);
+          const maxVal = yScales[j_visible].invert(y0);
           for (const d of data) {
               const val = +d[columns[j_original].name];
-              if (val >= yScales[j_visible].invert(y1) && val <= yScales[j_visible].invert(y0)) newSelectedIds.add(d.__id);
+              if (val >= minVal && val <= maxVal) newSelectedIds.add(d.__id);
           }
           onBrush({ indexX: columns.length, indexY: j_original, x0: padding/2, y0, x1: size - padding/2, y1, selectedIds: newSelectedIds });
       });
@@ -425,6 +540,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
               return <div key={`${i}-${j}`} style={{ gridColumn: i + 1, gridRow: j + 1 }}></div>
           })}
         </div>
+      {/* Canvas container for high-performance point rendering */}
+      <div
+        ref={canvasContainerRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: plotSize,
+          height: plotSize,
+          pointerEvents: 'none'
+        }}
+      />
       <svg id="scatterplot-matrix-svg" ref={ref} width={plotSize} height={plotSize}></svg>
     </div>
   );
