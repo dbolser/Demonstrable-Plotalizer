@@ -1,0 +1,5 @@
+{
+  "name": "Interactive Scatter Plot Matrix",
+  "description": "An interactive data visualization tool to explore correlations in tabular data. Upload a CSV, and the app generates a scatter plot matrix. Features include reordering columns via drag-and-drop, toggling logarithmic scales, and linked highlighting/filtering of data points across all plots.",
+  "requestFramePermissions": []
+}
