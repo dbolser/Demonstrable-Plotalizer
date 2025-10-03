@@ -16,6 +16,7 @@ const App: React.FC = () => {
   const [brushSelection, setBrushSelection] = useState<BrushSelection | null>(null);
   const [filterMode, setFilterMode] = useState<FilterMode>('highlight');
   const [showHistograms, setShowHistograms] = useState<boolean>(true);
+  const [columnFilter, setColumnFilter] = useState<string>('');
   const [tooltip, setTooltip] = useState<{ visible: boolean; content: string; x: number; y: number }>({
     visible: false,
     content: '',
@@ -101,6 +102,18 @@ const App: React.FC = () => {
     setTooltip(prev => ({ ...prev, visible: false }));
   };
 
+  const handleColumnFilterChange = (filter: string) => {
+    setColumnFilter(filter);
+
+    // Update column visibility based on filter
+    setColumns(prevColumns => {
+      return prevColumns.map(col => ({
+        ...col,
+        visible: filter === '' || col.name.toLowerCase().includes(filter.toLowerCase())
+      }));
+    });
+  };
+
   if (!columns.length) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
@@ -142,6 +155,8 @@ const App: React.FC = () => {
               showHistograms={showHistograms}
               setShowHistograms={setShowHistograms}
               labelColumn={labelColumn}
+              columnFilter={columnFilter}
+              onColumnFilterChange={handleColumnFilterChange}
             />
           </aside>
           <main className="flex-1 p-4 bg-gray-100 overflow-auto">
