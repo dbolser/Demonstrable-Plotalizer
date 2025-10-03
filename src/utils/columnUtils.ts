@@ -1,5 +1,4 @@
 import type { Column } from '../types';
-import { filterData } from '../utils/dataUtils';
 
 export function reorderColumns(columns: Column[], dragIndex: number, hoverIndex: number): Column[] {
     const newColumns = [...columns];
@@ -8,10 +7,25 @@ export function reorderColumns(columns: Column[], dragIndex: number, hoverIndex:
 }
 
 export function filterColumns(columns: Column[], filter: string): Column[] {
-    return columns.map(col => ({
-        ...col,
-        visible: filter === '' || col.name.toLowerCase().includes(filter.toLowerCase())
-    }));
+    const normalizedFilter = filter.trim().toLowerCase();
+    const shouldShowAll = normalizedFilter === '';
+
+    let didChange = false;
+    const nextColumns: Column[] = new Array(columns.length);
+
+    for (let index = 0; index < columns.length; index++) {
+        const col = columns[index];
+        const shouldBeVisible = shouldShowAll || col.name.toLowerCase().includes(normalizedFilter);
+
+        if (col.visible === shouldBeVisible) {
+            nextColumns[index] = col;
+        } else {
+            didChange = true;
+            nextColumns[index] = { ...col, visible: shouldBeVisible };
+        }
+    }
+
+    return didChange ? nextColumns : columns;
 }
 
 export function mapVisibleColumns(
