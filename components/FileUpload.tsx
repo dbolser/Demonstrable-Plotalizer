@@ -67,7 +67,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded }) => {
       />
       <UploadIcon className="h-8 w-8 text-gray-400 mb-2" />
       <span className="text-sm font-medium text-gray-600">
-        Click to upload or drag & drop CSV
+        Click to upload or drag-and-drop CSV
       </span>
     </div>
   );
