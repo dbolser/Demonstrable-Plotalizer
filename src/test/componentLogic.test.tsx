@@ -3,6 +3,8 @@ import { render } from '@testing-library/react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import App from '../../App';
+import { reorderColumns, filterColumns, mapVisibleColumns } from '../utils/columnUtils';
+import { filterData } from '../utils/dataUtils';
 
 // Mock PapaParse
 vi.mock('papaparse', () => ({
@@ -41,10 +43,7 @@ describe('App Component Logic', () => {
     ];
 
     const filter = 'mac1';
-    const filteredColumns = columns.map(col => ({
-      ...col,
-      visible: filter === '' || col.name.toLowerCase().includes(filter.toLowerCase())
-    }));
+    const filteredColumns = filterColumns(columns, filter);
 
     const visibleColumns = filteredColumns.filter(col => col.visible);
     expect(visibleColumns).toHaveLength(2);
@@ -58,14 +57,7 @@ describe('App Component Logic', () => {
       { name: 'col3', scale: 'linear' as const, visible: true },
     ];
 
-    // Simulate the swap logic from handleColumnReorder
-    function handleColumnReorder(columns: typeof columns, dragIndex: number, hoverIndex: number) {
-      const newColumns = [...columns];
-      [newColumns[dragIndex], newColumns[hoverIndex]] = [newColumns[hoverIndex], newColumns[dragIndex]];
-      return newColumns;
-    }
-
-    const reordered = handleColumnReorder(columns, 0, 2);
+    const reordered = reorderColumns(columns, 0, 2);
     expect(reordered[0].name).toBe('col3');
     expect(reordered[2].name).toBe('col1');
     expect(reordered[1].name).toBe('col2');
@@ -81,20 +73,12 @@ describe('App Component Logic', () => {
     const selectedIds = new Set([0, 2]);
 
     // Test highlight mode (shows all data)
-    const highlightModeData = {
-      filteredData: data,
-      selectedData: data.filter(d => selectedIds.has(d.__id))
-    };
-
+    const highlightModeData = filterData(data, selectedIds, 'highlight');
     expect(highlightModeData.filteredData).toHaveLength(3);
     expect(highlightModeData.selectedData).toHaveLength(2);
 
     // Test filter mode (shows only selected)
-    const filterModeData = {
-      filteredData: data.filter(d => selectedIds.has(d.__id)),
-      selectedData: data.filter(d => selectedIds.has(d.__id))
-    };
-
+    const filterModeData = filterData(data, selectedIds, 'filter');
     expect(filterModeData.filteredData).toHaveLength(2);
     expect(filterModeData.selectedData).toHaveLength(2);
   });
@@ -107,25 +91,17 @@ describe('App Component Logic', () => {
       { name: 'col4', scale: 'linear' as const, visible: true },
     ];
 
-    // Simulate the visible columns logic
-    const visibleColumns: typeof columns = [];
-    const visibleToOriginal = new Map<number, number>();
-    const originalToVisible = new Map<number, number>();
-
-    columns.forEach((col, originalIndex) => {
-      if (col.visible) {
-        const visibleIndex = visibleColumns.length;
-        visibleToOriginal.set(visibleIndex, originalIndex);
-        originalToVisible.set(originalIndex, visibleIndex);
-        visibleColumns.push(col);
-      }
-    });
+    const {
+      visibleColumns,
+      visibleIndexToOriginalIndex,
+      originalIndexToVisibleIndex,
+    } = mapVisibleColumns(columns);
 
     expect(visibleColumns).toHaveLength(3);
     expect(visibleColumns.map(c => c.name)).toEqual(['col1', 'col3', 'col4']);
-    expect(visibleToOriginal.get(0)).toBe(0); // col1
-    expect(visibleToOriginal.get(1)).toBe(2); // col3
-    expect(visibleToOriginal.get(2)).toBe(3); // col4
-    expect(originalToVisible.get(2)).toBe(1); // col3 is at visible index 1
+    expect(visibleIndexToOriginalIndex.get(0)).toBe(0); // col1
+    expect(visibleIndexToOriginalIndex.get(1)).toBe(2); // col3
+    expect(visibleIndexToOriginalIndex.get(2)).toBe(3); // col4
+    expect(originalIndexToVisibleIndex.get(2)).toBe(1); // col3 is at visible index 1
   });
 });

@@ -2,6 +2,8 @@ import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { useDrag, useDrop } from 'react-dnd';
 import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
+import { mapVisibleColumns } from '../src/utils/columnUtils';
+import { filterData } from '../src/utils/dataUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -98,26 +100,10 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const size = 150;
   const padding = 20;
 
-  const { visibleColumns, visibleIndexToOriginalIndex, originalIndexToVisibleIndex } = useMemo(() => {
-    const visibleCols: Column[] = [];
-    const visibleToOrig = new Map<number, number>();
-    const origToVisible = new Map<number, number>();
-    
-    columns.forEach((col, originalIndex) => {
-      if (col.visible) {
-        const visibleIndex = visibleCols.length;
-        visibleToOrig.set(visibleIndex, originalIndex);
-        origToVisible.set(originalIndex, visibleIndex);
-        visibleCols.push(col);
-      }
-    });
-
-    return { 
-      visibleColumns: visibleCols, 
-      visibleIndexToOriginalIndex: visibleToOrig, 
-      originalIndexToVisibleIndex: origToVisible 
-    };
-  }, [columns]);
+  const { visibleColumns, visibleIndexToOriginalIndex, originalIndexToVisibleIndex } = useMemo(
+    () => mapVisibleColumns(columns),
+    [columns]
+  );
   
   const n = visibleColumns.length;
   const plotSize = showHistograms ? size * (n + 1) : size * n;
@@ -259,13 +245,10 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, [size]);
 
 
-  const { filteredData, selectedData } = useMemo(() => {
-    const selected = data.filter(d => selectedIds.has(d.__id));
-    if (filterMode === 'filter' && selectedIds.size > 0) {
-      return { filteredData: selected, selectedData: selected };
-    }
-    return { filteredData: data, selectedData: selected };
-  }, [data, filterMode, selectedIds]);
+  const { filteredData, selectedData } = useMemo(
+    () => filterData(data, selectedIds, filterMode),
+    [data, selectedIds, filterMode]
+  );
 
   // Create stable cache key based on data characteristics, not positions
   const createCacheKey = useCallback((colX: string, colY: string, scaleX: string, scaleY: string, dataHash: string, selectedHash: string, filterMode: FilterMode) => {
@@ -464,6 +447,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     diagonalCells.each(function([i]) {
       const g = d3.select(this);
     
+      // Add a data-testid to the diagonal cell for easy selection in tests
+      const originalIndex = visibleIndexToOriginalIndex.get(i);
+      if (originalIndex !== undefined) {
+        const columnName = columns[originalIndex].name;
+        g.attr('data-testid', `diagonal-cell-${columnName}`);
+      }
+
       // Left Axis
       const leftAxis = d3.axisLeft(yScales[i]).ticks(4).tickSize(5).tickPadding(-4);
       g.append("g")

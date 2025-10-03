@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { DataPoint, Column } from '../../types';
+import {
+  reorderColumns,
+  filterColumns,
+  mapVisibleColumns,
+} from '../utils/columnUtils';
+import { filterData } from '../utils/dataUtils';
 
 // Helper functions for performance testing
 function createLargeDataset(rows: number, cols: number): { data: DataPoint[], columns: Column[] } {
@@ -45,11 +51,13 @@ function mockCreateImageFromCache(key: string, left: number, top: number): HTMLI
 describe('Performance Tests', () => {
   it('should handle 30k rows efficiently', () => {
     const { data, columns } = createLargeDataset(30000, 5);
+    const selectedIds = new Set(
+      Array.from({ length: 5000 }, (_, i) => i * 6)
+    ); // Select 5k points
 
     const { time } = measureExecutionTime(() => {
-      // Simulate data filtering (like column filtering)
-      const filtered = data.filter(d => d.col_1 > 50);
-      return filtered;
+      // Use the actual data filtering logic
+      return filterData(data, selectedIds, 'filter');
     });
 
     // Should complete within reasonable time (adjust threshold as needed)
@@ -62,9 +70,8 @@ describe('Performance Tests', () => {
     const { data, columns } = createLargeDataset(1000, 30);
 
     const { time } = measureExecutionTime(() => {
-      // Simulate column visibility filtering
-      const visibleColumns = columns.filter(col => col.visible);
-      return visibleColumns;
+      // Use the actual column visibility logic
+      return mapVisibleColumns(columns);
     });
 
     expect(time).toBeLessThan(10); // Should be very fast
@@ -124,10 +131,8 @@ describe('Performance Tests', () => {
     const { columns } = createLargeDataset(30000, 30);
 
     const { time } = measureExecutionTime(() => {
-      // Simulate column reordering
-      const newColumns = [...columns];
-      [newColumns[0], newColumns[29]] = [newColumns[29], newColumns[0]];
-      return newColumns;
+      // Use the actual reordering logic
+      return reorderColumns(columns, 0, 29);
     });
 
     expect(time).toBeLessThan(1); // Array swapping should be immediate
@@ -135,12 +140,11 @@ describe('Performance Tests', () => {
 
   it('should efficiently filter columns by name pattern', () => {
     const { columns } = createLargeDataset(1000, 30);
+    const filter = 'col_1';
 
     const { time } = measureExecutionTime(() => {
-      const filter = 'col_1';
-      return columns.filter(col =>
-        col.name.toLowerCase().includes(filter.toLowerCase())
-      );
+      // Use the actual column filtering logic
+      return filterColumns(columns, filter);
     });
 
     expect(time).toBeLessThan(5); // String filtering should be fast
@@ -177,9 +181,8 @@ describe('Performance Tests', () => {
     const selectedIds = new Set(Array.from({ length: 1000 }, (_, i) => i));
 
     const { time } = measureExecutionTime(() => {
-      // Simulate filtering data by selection
-      const filtered = data.filter(d => selectedIds.has(d.__id));
-      return filtered;
+      // Use the actual data filtering logic for brush selection
+      return filterData(data, selectedIds, 'highlight');
     });
 
     expect(time).toBeLessThan(50); // Should filter 30k records reasonably fast
