@@ -273,7 +273,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return `${dataLength}-${selectedSize}-${firstDataId}`;
   }, [data.length, selectedIds.size, data]);
 
-  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds, selectedIds.size]);
+  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
 
   // Drag optimization callbacks
   const handleDragStart = useCallback(() => {
