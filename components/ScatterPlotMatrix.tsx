@@ -23,12 +23,7 @@ export const computeSelectedStateHash = (selectedIds: Set<number>): string => {
     return '0:';
   }
 
-  const sortedIds = new Array<number>(selectedIds.size);
-  let index = 0;
-  selectedIds.forEach(id => {
-    sortedIds[index++] = id;
-  });
-  sortedIds.sort((a, b) => a - b);
+  const sortedIds = Array.from(selectedIds).sort((a, b) => a - b);
 
   return `${sortedIds.length}:${sortedIds.join(',')}`;
 };
