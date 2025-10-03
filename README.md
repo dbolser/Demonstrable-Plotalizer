@@ -12,6 +12,7 @@ A high-performance, interactive scatter plot matrix visualization tool built wit
 - 🎨 **Multiple Scales**: Linear and logarithmic scaling options
 - 📁 **CSV Import**: Drag and drop CSV files or load sample data
 
+
 ## Quick Start
 
 **Prerequisites:** Node.js
@@ -51,7 +52,7 @@ npm run test:run
 # Run tests in watch mode
 npm test
 
-# Run tests with UI
+# Run tests with UI (open a fancy GUI to show test results)
 npm run test:ui
 
 # Run with coverage

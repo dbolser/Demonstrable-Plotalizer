@@ -122,6 +122,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const n = visibleColumns.length;
   const plotSize = showHistograms ? size * (n + 1) : size * n;
   
+  // Create a dependency string for scales of visible columns
+  const scaleDependency = useMemo(() => visibleColumns.map(c => c.scale).join(','), [visibleColumns]);
+
   const selectedIds = useMemo(() => {
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
@@ -265,8 +268,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, [data, filterMode, selectedIds]);
 
   // Create stable cache key based on data characteristics, not positions
-  const createCacheKey = useCallback((colX: string, colY: string, dataHash: string, selectedHash: string, filterMode: FilterMode) => {
-    return `${colX}-${colY}-${dataHash}-${selectedHash}-${filterMode}`;
+  const createCacheKey = useCallback((colX: string, colY: string, scaleX: string, scaleY: string, dataHash: string, selectedHash: string, filterMode: FilterMode) => {
+    return `${colX}-${colY}-${scaleX}-${scaleY}-${dataHash}-${selectedHash}-${filterMode}`;
   }, []);
 
   // Simple hash for data state
@@ -391,9 +394,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const j_original = visibleIndexToOriginalIndex.get(j);
         if (i_original === undefined || j_original === undefined) return;
 
-        const colX = columns[i_original].name;
-        const colY = columns[j_original].name;
-        const cacheKey = createCacheKey(colX, colY, dataStateHash, selectedStateHash, filterMode);
+        const colX = columns[i_original];
+        const colY = columns[j_original];
+        if (!colX || !colY) return;
+
+        const cacheKey = createCacheKey(colX.name, colY.name, colX.scale, colY.scale, dataStateHash, selectedStateHash, filterMode);
 
         const cachedImg = createImageFromCache(cacheKey, i * size, j * size);
         if (cachedImg) {
@@ -410,9 +415,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const j_original = visibleIndexToOriginalIndex.get(j);
           if (i_original === undefined || j_original === undefined) return;
 
-          const colX = columns[i_original].name;
-          const colY = columns[j_original].name;
-          const cacheKey = createCacheKey(colX, colY, dataStateHash, selectedStateHash, filterMode);
+        const colX = columns[i_original];
+        const colY = columns[j_original];
+        if (!colX || !colY) return;
+
+        const cacheKey = createCacheKey(colX.name, colY.name, colX.scale, colY.scale, dataStateHash, selectedStateHash, filterMode);
 
           // Try to use cached image first
           const cachedImg = createImageFromCache(cacheKey, i * size, j * size);
@@ -432,7 +439,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           canvasContainerRef.current!.appendChild(canvas);
 
           // Store canvas reference for drag repositioning (by column names)
-          const canvasKey = `${colX}-${colY}`;
+        const canvasKey = `${colX.name}-${colY.name}`;
           canvasElementsRef.current.set(canvasKey, canvas);
 
           // Render points to canvas
@@ -441,8 +448,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             filteredData,
             xScales[i],
             yScales[j],
-            colX,
-            colY,
+            colX.name,
+            colY.name,
             selectedIds,
             filterMode
           );
@@ -637,7 +644,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, labelColumn, onPointHover, onPointLeave, brushSelection, visibleColumns, visibleIndexToOriginalIndex, originalIndexToVisibleIndex]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, labelColumn, onPointHover, onPointLeave, brushSelection, visibleColumns, visibleIndexToOriginalIndex, originalIndexToVisibleIndex, createSpatialGrid, getPointsInBrush, renderPointsToCanvas, cacheCanvasAsImage, createImageFromCache, createCacheKey, dataStateHash, selectedStateHash, scaleDependency]);
 
   return (
     <div className="w-full h-full relative">
