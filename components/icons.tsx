@@ -31,7 +31,7 @@ export const DownloadIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => 
   </svg>
 );
 
-export const GithubIcon: React.FC<React.SVGProps<SVGSVGElement>> = (props) => (
+export const GitHubIcon = (props: React.SVGProps<SVGSVGElement>) => (
     <svg 
      {...props}
      xmlns="http://www.w3.org/2000/svg" 
