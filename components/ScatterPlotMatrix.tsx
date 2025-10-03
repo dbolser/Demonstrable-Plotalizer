@@ -16,27 +16,41 @@ interface ScatterPlotMatrixProps {
   onPointLeave: () => void;
 }
 
-const DraggableHeader: React.FC<{ name: string, index: number, onColumnReorder: (dragIndex: number, hoverIndex: number) => void }> = ({ name, index, onColumnReorder }) => {
+const DraggableHeader: React.FC<{
+  name: string,
+  index: number,
+  onColumnReorder: (dragIndex: number, hoverIndex: number) => void,
+  onDragStart?: () => void,
+  onDragEnd?: () => void
+}> = ({ name, index, onColumnReorder, onDragStart, onDragEnd }) => {
   const ref = useRef<HTMLDivElement>(null);
 
-  const [, drop] = useDrop({
+  const [{ isOver }, drop] = useDrop({
     accept: 'column',
-    hover(item: { index: number }) {
-      if (!ref.current) return;
-      const dragIndex = item.index;
+    drop(item: { index: number, originalIndex: number }) {
+      const dragIndex = item.originalIndex;
       const hoverIndex = index;
-      if (dragIndex === hoverIndex) return;
-      onColumnReorder(dragIndex, hoverIndex);
-      item.index = hoverIndex;
+      if (dragIndex !== hoverIndex) {
+        onColumnReorder(dragIndex, hoverIndex);
+      }
     },
+    collect: (monitor) => ({
+      isOver: monitor.isOver(),
+    }),
   });
 
   const [{ isDragging }, drag] = useDrag({
     type: 'column',
-    item: { index },
+    item: () => {
+      onDragStart?.();
+      return { index, originalIndex: index };
+    },
     collect: (monitor) => ({
       isDragging: monitor.isDragging(),
     }),
+    end: () => {
+      onDragEnd?.();
+    },
   });
 
   drag(drop(ref));
@@ -44,10 +58,20 @@ const DraggableHeader: React.FC<{ name: string, index: number, onColumnReorder: 
   return (
     <div
       ref={ref}
-      style={{ opacity: isDragging ? 0 : 1 }}
-      className="w-full h-full flex items-center justify-center border border-gray-300 rounded cursor-move select-none"
+      style={{ opacity: isDragging ? 0.5 : 1 }}
+      className={`w-full h-full flex items-center justify-center border rounded cursor-move select-none ${
+        isDragging ? 'border-brand-secondary bg-gray-100' :
+        isOver ? 'border-brand-primary bg-brand-primary/10' :
+        'border-gray-300'
+      }`}
     >
-      <span className="font-bold text-brand-dark p-2 text-center break-all">{name}</span>
+      {isDragging ? (
+        <span className="font-bold text-gray-400 p-2 text-center break-all">Moving...</span>
+      ) : isOver ? (
+        <span className="font-bold text-brand-primary p-2 text-center break-all">Drop here</span>
+      ) : (
+        <span className="font-bold text-brand-dark p-2 text-center break-all">{name}</span>
+      )}
     </div>
   );
 };
@@ -67,6 +91,10 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
+  const canvasCacheRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const imageDataCacheRef = useRef<Map<string, string>>(new Map()); // Store image URLs
+  const isDraggingRef = useRef(false);
   const size = 150;
   const padding = 20;
 
@@ -201,6 +229,33 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     ctx.globalAlpha = 1;
   }, [size]);
 
+  // Convert canvas to cached image data URL
+  const cacheCanvasAsImage = useCallback((canvas: HTMLCanvasElement, key: string) => {
+    try {
+      const imageUrl = canvas.toDataURL('image/png');
+      imageDataCacheRef.current.set(key, imageUrl);
+    } catch (e) {
+      console.warn('Failed to cache canvas as image:', e);
+    }
+  }, []);
+
+  // Create image element from cached data
+  const createImageFromCache = useCallback((key: string, left: number, top: number): HTMLImageElement | null => {
+    const imageUrl = imageDataCacheRef.current.get(key);
+    if (!imageUrl) return null;
+
+    const img = document.createElement('img');
+    img.src = imageUrl;
+    img.style.position = 'absolute';
+    img.style.left = `${left}px`;
+    img.style.top = `${top}px`;
+    img.style.pointerEvents = 'none';
+    img.width = size;
+    img.height = size;
+    return img;
+  }, [size]);
+
+
   const { filteredData, selectedData } = useMemo(() => {
     const selected = data.filter(d => selectedIds.has(d.__id));
     if (filterMode === 'filter' && selectedIds.size > 0) {
@@ -209,8 +264,36 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return { filteredData: data, selectedData: selected };
   }, [data, filterMode, selectedIds]);
 
+  // Create stable cache key based on data characteristics, not positions
+  const createCacheKey = useCallback((colX: string, colY: string, dataHash: string, selectedHash: string, filterMode: FilterMode) => {
+    return `${colX}-${colY}-${dataHash}-${selectedHash}-${filterMode}`;
+  }, []);
+
+  // Simple hash for data state
+  const dataStateHash = useMemo(() => {
+    const dataLength = data.length;
+    const selectedSize = selectedIds.size;
+    const firstDataId = data[0]?.__id ?? 0;
+    return `${dataLength}-${selectedSize}-${firstDataId}`;
+  }, [data.length, selectedIds.size, data]);
+
+  const selectedStateHash = useMemo(() => {
+    return `${selectedIds.size}-${Array.from(selectedIds).slice(0, 5).join(',')}`;
+  }, [selectedIds]);
+
+  // Drag optimization callbacks
+  const handleDragStart = useCallback(() => {
+    isDraggingRef.current = true;
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    isDraggingRef.current = false;
+  }, []);
+
   useEffect(() => {
     if (!ref.current || data.length === 0) return;
+
+    // During drag, we'll update layout but skip expensive canvas re-rendering
 
     const svg = d3.select(ref.current);
     svg.selectAll("*").remove(); // Clear previous render
@@ -299,36 +382,75 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     // Create canvas elements for point rendering
     if (!canvasContainerRef.current) return;
 
-    // Clear existing canvases
-    canvasContainerRef.current.innerHTML = '';
+    if (isDraggingRef.current) {
+      // During drag, use cached images for better performance
+      canvasContainerRef.current.innerHTML = '';
 
-    brushableCells.each(function ([i, j]) {
+      brushableCells.each(function ([i, j]) {
         const i_original = visibleIndexToOriginalIndex.get(i);
         const j_original = visibleIndexToOriginalIndex.get(j);
         if (i_original === undefined || j_original === undefined) return;
 
-        // Create canvas for this cell
-        const canvas = document.createElement('canvas');
-        canvas.width = size;
-        canvas.height = size;
-        canvas.style.position = 'absolute';
-        canvas.style.left = `${i * size}px`;
-        canvas.style.top = `${j * size}px`;
-        canvas.style.pointerEvents = 'none';
-        canvasContainerRef.current!.appendChild(canvas);
+        const colX = columns[i_original].name;
+        const colY = columns[j_original].name;
+        const cacheKey = createCacheKey(colX, colY, dataStateHash, selectedStateHash, filterMode);
 
-        // Render points to canvas
-        renderPointsToCanvas(
-          canvas,
-          filteredData,
-          xScales[i],
-          yScales[j],
-          columns[i_original].name,
-          columns[j_original].name,
-          selectedIds,
-          filterMode
-        );
+        const cachedImg = createImageFromCache(cacheKey, i * size, j * size);
+        if (cachedImg) {
+          canvasContainerRef.current!.appendChild(cachedImg);
+        }
       });
+    } else {
+      // Normal render: clear and recreate canvases with points
+      canvasContainerRef.current.innerHTML = '';
+      canvasElementsRef.current.clear();
+
+      brushableCells.each(function ([i, j]) {
+          const i_original = visibleIndexToOriginalIndex.get(i);
+          const j_original = visibleIndexToOriginalIndex.get(j);
+          if (i_original === undefined || j_original === undefined) return;
+
+          const colX = columns[i_original].name;
+          const colY = columns[j_original].name;
+          const cacheKey = createCacheKey(colX, colY, dataStateHash, selectedStateHash, filterMode);
+
+          // Try to use cached image first
+          const cachedImg = createImageFromCache(cacheKey, i * size, j * size);
+          if (cachedImg) {
+            canvasContainerRef.current!.appendChild(cachedImg);
+            return;
+          }
+
+          // No cache - create canvas and render
+          const canvas = document.createElement('canvas');
+          canvas.width = size;
+          canvas.height = size;
+          canvas.style.position = 'absolute';
+          canvas.style.left = `${i * size}px`;
+          canvas.style.top = `${j * size}px`;
+          canvas.style.pointerEvents = 'none';
+          canvasContainerRef.current!.appendChild(canvas);
+
+          // Store canvas reference for drag repositioning (by column names)
+          const canvasKey = `${colX}-${colY}`;
+          canvasElementsRef.current.set(canvasKey, canvas);
+
+          // Render points to canvas
+          renderPointsToCanvas(
+            canvas,
+            filteredData,
+            xScales[i],
+            yScales[j],
+            colX,
+            colY,
+            selectedIds,
+            filterMode
+          );
+
+          // Cache the rendered canvas as image
+          setTimeout(() => cacheCanvasAsImage(canvas, cacheKey), 0);
+        });
+    }
       
     const diagonalCells = cell.filter(([i, j]) => i === j);
     
@@ -533,7 +655,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
                   const column = columns[originalIndex];
                   return (
                     <div key={column.name} style={{ gridColumn: i + 1, gridRow: j + 1, pointerEvents: 'auto' }}>
-                        <DraggableHeader name={column.name} index={originalIndex} onColumnReorder={onColumnReorder} />
+                        <DraggableHeader
+                          name={column.name}
+                          index={originalIndex}
+                          onColumnReorder={onColumnReorder}
+                          onDragStart={handleDragStart}
+                          onDragEnd={handleDragEnd}
+                        />
                     </div>
                   );
               }
