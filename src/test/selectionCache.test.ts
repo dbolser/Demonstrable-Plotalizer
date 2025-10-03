@@ -17,8 +17,7 @@ describe('selected state cache key stability', () => {
 
   it('produces stable cache keys for identical selections regardless of order', () => {
     const selectionA = new Set([7, 3, 11, 5]);
-    const selectionB = new Set<number>();
-    [5, 11, 3, 7].forEach(id => selectionB.add(id));
+    const selectionB = new Set([5, 11, 3, 7]);
 
     expect(buildCacheKey(selectionA)).toEqual(buildCacheKey(selectionB));
   });
