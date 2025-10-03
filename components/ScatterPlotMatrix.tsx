@@ -285,23 +285,26 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     svg.selectAll("*").remove(); // Clear previous render
 
     const createScale = (c: Column, range: [number, number]) => {
-      // Force coersion to number and filter out non-finite values
-      const values = data.map(d => +d[c.name]).filter(isFinite);
+      let values = data.map(d => +d[c.name]).filter(isFinite);
+      if (c.scale === 'log') {
+        values = values.filter(v => v > 0);
+      }
+
       const extent = d3.extent(values);
 
-      let domain: [number, number] = [0, 1];
+      let domain: [number, number];
       if (extent[0] !== undefined && extent[1] !== undefined) {
         domain = extent;
+      } else {
+        // Fallback domain if no valid data
+        domain = c.scale === 'log' ? [0.1, 1] : [0, 1];
       }
 
       if (c.scale === 'log') {
-        const start = Math.max(1e-9, domain[0]);
-        let end = Math.max(1e-9, domain[1]);
-        if (start >= end) {
-          end = start * 10;
-        }
-        domain = [start, end];
-        return d3.scaleLog().domain(domain).range(range);
+        let [start, end] = domain;
+        if (start <= 0) start = 1e-9;
+        if (end <= start) end = start * 10;
+        return d3.scaleLog().domain([start, end]).range(range).clamp(true);
       }
       
       if (domain[0] === domain[1]) {
@@ -425,10 +428,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const canvasKey = `${colX.name}-${colY.name}`;
           canvasElementsRef.current.set(canvasKey, canvas);
 
+        let plotData = filteredData;
+        if (colX.scale === 'log') {
+          plotData = plotData.filter(d => +d[colX.name] > 0);
+        }
+        if (colY.scale === 'log') {
+          plotData = plotData.filter(d => +d[colY.name] > 0);
+        }
+
           // Render points to canvas
           renderPointsToCanvas(
             canvas,
-            filteredData,
+            plotData,
             xScales[i],
             yScales[j],
             colX.name,
@@ -455,7 +466,20 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       }
 
       // Left Axis
-      const leftAxis = d3.axisLeft(yScales[i]).ticks(4).tickSize(5).tickPadding(-4);
+      const leftAxis = d3.axisLeft(yScales[i]);
+      const column = originalIndex !== undefined ? columns[originalIndex] : undefined;
+
+      if (column && column.scale === 'log') {
+        const domain = yScales[i].domain();
+        const extent = Math.abs(Math.log10(domain[0]) - Math.log10(domain[1]));
+        const numTicks = Math.max(2, Math.min(4, Math.ceil(extent)));
+        leftAxis.ticks(numTicks, d3.format(".1s"));
+      } else {
+        leftAxis.ticks(4);
+      }
+
+      leftAxis.tickSize(5).tickPadding(-4);
+
       g.append("g")
         .attr("transform", `translate(${padding / 2}, 0)`)
         .call(leftAxis)
