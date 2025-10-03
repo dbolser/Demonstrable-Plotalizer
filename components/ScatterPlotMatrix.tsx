@@ -285,7 +285,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     svg.selectAll("*").remove(); // Clear previous render
 
     const createScale = (c: Column, range: [number, number]) => {
-      // Force coersion to number and filter out non-finite values
+      // Force coercion to number and filter out non-finite values
       const values = data.map(d => +d[c.name]).filter(isFinite);
       const extent = d3.extent(values);
 
