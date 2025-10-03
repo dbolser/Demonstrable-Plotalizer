@@ -225,8 +225,21 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     
     diagonalCells.each(function([i]) {
       const g = d3.select(this);
-      g.append("g").attr("transform", `translate(0, ${size - padding / 2})`).call(d3.axisBottom(xScales[i]).ticks(4).tickSize(0).tickPadding(5)).call(g => g.select(".domain").remove()).selectAll("text").style("font-size", "9px").style("fill", "#4b5563");
-      g.append("g").attr("transform", `translate(${padding / 2}, 0)`).call(d3.axisLeft(yScales[i]).ticks(4).tickSize(0).tickPadding(5)).call(g => g.select(".domain").remove()).selectAll("text").style("font-size", "9px").style("fill", "#4b5563");
+    
+      // Left Axis
+      const leftAxis = d3.axisLeft(yScales[i]).ticks(4).tickSize(5).tickPadding(-4);
+      g.append("g")
+        .attr("transform", `translate(${padding / 2}, 0)`)
+        .call(leftAxis)
+        .call(axis => {
+          axis.select(".domain").remove();
+          axis.selectAll(".tick line")
+            .style("stroke", "#3f3f46");
+          axis.selectAll("text")
+            .style("text-anchor", "start")
+            .style("font-size", "10px")
+            .style("fill", "#3f3f46");
+        });
     });
     
     if (showHistograms) {
