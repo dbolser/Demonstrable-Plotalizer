@@ -297,11 +297,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       }
 
       if (column.scale === 'log') {
-        const start = Math.max(1e-9, Math.min(stat.minPositive, stat.max));
-        let end = Math.max(1e-9, stat.max);
-        if (start >= end) {
-          end = start * 10;
-        }
+        const start = isFinite(stat.minPositive) ? stat.minPositive : 1e-9;
+        const end = stat.max > start ? stat.max : start * 10;
         return d3.scaleLog().domain([start, end]).range(range);
       }
 
@@ -456,7 +453,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}`;
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
-      if (!isDraggingRef.current && (previousKey !== renderKey || filterMode === 'filter')) {
+      if (!isDraggingRef.current && previousKey !== renderKey) {
         renderPointsToCanvas(
           canvas,
           filteredData,
