@@ -18,6 +18,16 @@ interface ScatterPlotMatrixProps {
   onPointLeave: () => void;
 }
 
+export const computeSelectedStateHash = (selectedIds: Set<number>): string => {
+  if (selectedIds.size === 0) {
+    return '0:';
+  }
+
+  const sortedIds = Array.from(selectedIds).sort((a, b) => a - b);
+
+  return `${sortedIds.length}:${sortedIds.join(',')}`;
+};
+
 const DraggableHeader: React.FC<{
   name: string,
   index: number,
@@ -263,9 +273,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return `${dataLength}-${selectedSize}-${firstDataId}`;
   }, [data.length, selectedIds.size, data]);
 
-  const selectedStateHash = useMemo(() => {
-    return `${selectedIds.size}-${Array.from(selectedIds).slice(0, 5).join(',')}`;
-  }, [selectedIds]);
+  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
 
   // Drag optimization callbacks
   const handleDragStart = useCallback(() => {
