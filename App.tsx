@@ -8,6 +8,7 @@ import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
 import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
 import { GithubIcon } from './components/icons';
+import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 
 const App: React.FC = () => {
   const [data, setData] = useState<DataPoint[]>([]);
@@ -73,12 +74,7 @@ const App: React.FC = () => {
   };
 
   const handleColumnReorder = (dragIndex: number, hoverIndex: number) => {
-    setColumns(prevColumns => {
-      const newColumns = [...prevColumns];
-      // Perform a direct swap
-      [newColumns[dragIndex], newColumns[hoverIndex]] = [newColumns[hoverIndex], newColumns[dragIndex]];
-      return newColumns;
-    });
+    setColumns(prevColumns => reorderColumns(prevColumns, dragIndex, hoverIndex));
   };
 
   const handleColumnUpdate = (index: number, updatedColumn: Column) => {
@@ -104,14 +100,7 @@ const App: React.FC = () => {
 
   const handleColumnFilterChange = (filter: string) => {
     setColumnFilter(filter);
-
-    // Update column visibility based on filter
-    setColumns(prevColumns => {
-      return prevColumns.map(col => ({
-        ...col,
-        visible: filter === '' || col.name.toLowerCase().includes(filter.toLowerCase())
-      }));
-    });
+    setColumns(prevColumns => filterColumns(prevColumns, filter));
   };
 
   if (!columns.length) {
