@@ -7,7 +7,7 @@ import { ControlPanel } from './components/ControlPanel';
 import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
 import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
-import { GithubIcon } from './components/icons';
+import { GitHubIcon } from './components/icons';
 import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 
 const App: React.FC = () => {
@@ -130,7 +130,7 @@ const App: React.FC = () => {
         <header className="bg-brand-dark text-white p-4 shadow-md flex justify-between items-center">
           <h1 className="text-2xl font-bold">Interactive Scatter Plot Matrix</h1>
            <a href="https://github.com/your-repo" target="_blank" rel="noopener noreferrer" className="text-white hover:text-brand-secondary">
-             <GithubIcon className="h-8 w-8" />
+             <GitHubIcon className="h-8 w-8" />
            </a>
         </header>
         <div className="flex flex-1 overflow-hidden">
