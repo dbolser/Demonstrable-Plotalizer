@@ -4,6 +4,7 @@ import { useDrag, useDrop } from 'react-dnd';
 import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
+import { computeSelectedStateHash } from '../src/utils/selectionUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -17,16 +18,6 @@ interface ScatterPlotMatrixProps {
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
 }
-
-export const computeSelectedStateHash = (selectedIds: Set<number>): string => {
-  if (selectedIds.size === 0) {
-    return '0:';
-  }
-
-  const sortedIds = Array.from(selectedIds).sort((a, b) => a - b);
-
-  return `${sortedIds.length}:${sortedIds.join(',')}`;
-};
 
 const DraggableHeader: React.FC<{
   name: string,
@@ -132,8 +123,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
       const screenX = xScale(x);
       const screenY = yScale(y);
-      const gridX = Math.floor((screenX - padding / 2) / (size - padding) * gridSize);
-      const gridY = Math.floor((screenY - padding / 2) / (size - padding) * gridSize);
+      // Map screen coordinates [0, size] to grid cells [0, gridSize-1]
+      const gridX = Math.floor((screenX / size) * gridSize);
+      const gridY = Math.floor((screenY / size) * gridSize);
 
       if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
         grid[gridX][gridY].push(d);
@@ -141,17 +133,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     return grid;
-  }, [size, padding]);
+  }, [size]);
 
   // Fast brush selection using spatial grid
   const getPointsInBrush = useCallback((grid: DataPoint[][][], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, x0: number, y0: number, x1: number, y1: number, xCol: string, yCol: string) => {
     const gridSize = 20;
     const selectedIds = new Set<number>();
 
-    const startGridX = Math.max(0, Math.floor((x0 - padding / 2) / (size - padding) * gridSize));
-    const endGridX = Math.min(gridSize - 1, Math.floor((x1 - padding / 2) / (size - padding) * gridSize));
-    const startGridY = Math.max(0, Math.floor((y0 - padding / 2) / (size - padding) * gridSize));
-    const endGridY = Math.min(gridSize - 1, Math.floor((y1 - padding / 2) / (size - padding) * gridSize));
+    // Map brush coordinates to grid cells
+    // Since brush now covers [0, size], we need to map that range to [0, gridSize-1]
+    const startGridX = Math.max(0, Math.floor((x0 / size) * gridSize));
+    const endGridX = Math.min(gridSize - 1, Math.ceil((x1 / size) * gridSize));
+    const startGridY = Math.max(0, Math.floor((y0 / size) * gridSize));
+    const endGridY = Math.min(gridSize - 1, Math.ceil((y1 / size) * gridSize));
 
     for (let gx = startGridX; gx <= endGridX; gx++) {
       for (let gy = startGridY; gy <= endGridY; gy++) {
@@ -169,7 +163,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     }
 
     return selectedIds;
-  }, [size, padding]);
+  }, [size]);
 
   // Canvas rendering function
   const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
@@ -235,20 +229,12 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return `${data.length}-${firstId}-${lastId}`;
   }, [data]);
 
-  const selectedStateHash = useMemo(() => {
-    if (selectedIds.size === 0) return 'none';
-    let index = 0;
-    let sample = '';
-    for (const id of selectedIds) {
-      if (index < 10) {
-        sample += index === 0 ? `${id}` : `,${id}`;
-      } else {
-        break;
-      }
-      index += 1;
-    }
-    return `${selectedIds.size}-${sample}`;
-  }, [selectedIds]);
+  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
+
+  // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
+  const dataForStats = useMemo(() => {
+    return (filterMode === 'filter' && selectedIds.size > 0) ? filteredData : data;
+  }, [filterMode, selectedIds.size, filteredData, data]);
 
   const columnStats = useMemo(() => {
     const stats = new Map<string, { min: number; max: number; minPositive: number }>();
@@ -260,7 +246,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       return stats;
     }
 
-    for (const row of data) {
+    for (const row of dataForStats) {
       for (const col of visibleColumns) {
         const value = +row[col.name];
         if (!isFinite(value)) continue;
@@ -285,7 +271,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     return stats;
-  }, [data, visibleColumns]);
+  }, [dataForStats, visibleColumns]);
 
   const createScale = useCallback(
     (column: Column, range: [number, number]) => {
@@ -378,24 +364,24 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     let histCellsBottom: d3.Selection<SVGGElement, number, SVGGElement, unknown> | null = null;
     let histCellsRight: d3.Selection<SVGGElement, number, SVGGElement, unknown> | null = null;
 
-    const brush = d3.brush().extent([[padding / 2, padding / 2], [size - padding / 2, size - padding / 2]]);
-    const brushX = d3.brushX().extent([[padding / 2, padding / 2], [size - padding / 2, size - padding / 2]]);
-    const brushY = d3.brushY().extent([[padding / 2, padding / 2], [size - padding / 2, size - padding / 2]]);
+    const brush = d3.brush().extent([[0, 0], [size, size]]);
+    const brushX = d3.brushX().extent([[0, 0], [size, size]]);
+    const brushY = d3.brushY().extent([[0, 0], [size, size]]);
 
     brush
       .on("end", function (event) {
         if (!event.sourceEvent) return; // Ignore programmatic brushes
-
-        const parentNode = this.parentNode as Element;
-        if (!parentNode) return;
 
         if (!event.selection) {
           onBrush(null);
           return;
         }
 
-        const i_visible = parseInt(d3.select(parentNode).attr("data-index-i")!, 10);
-        const j_visible = parseInt(d3.select(parentNode).attr("data-index-j")!, 10);
+        // Get the [i, j] data bound to this cell
+        const cellData = d3.select(this).datum() as [number, number];
+        if (!cellData || cellData.length !== 2) return;
+
+        const [i_visible, j_visible] = cellData;
         const i_original = visibleIndexToOriginalIndex.get(i_visible);
         const j_original = visibleIndexToOriginalIndex.get(j_visible);
 
@@ -514,11 +500,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       brushX
         .on("end", function (event) {
           if (!event.sourceEvent) return;
-          const parentNode = this.parentNode as Element;
-          if (!parentNode) return;
-          const i_visible = parseInt(d3.select(parentNode).attr("data-index")!, 10);
-          const i_original = visibleIndexToOriginalIndex.get(i_visible);
 
+          const i_visible = d3.select(this).datum() as number;
+          if (i_visible === undefined) return;
+
+          const i_original = visibleIndexToOriginalIndex.get(i_visible);
           if (i_original === undefined || !columns[i_original]) return;
 
           if (!event.selection) { onBrush(null); return; }
@@ -578,11 +564,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       brushY
         .on("end", function (event) {
           if (!event.sourceEvent) return;
-          const parentNode = this.parentNode as Element;
-          if (!parentNode) return;
-          const j_visible = parseInt(d3.select(parentNode).attr("data-index")!, 10);
-          const j_original = visibleIndexToOriginalIndex.get(j_visible);
 
+          const j_visible = d3.select(this).datum() as number;
+          if (j_visible === undefined) return;
+
+          const j_original = visibleIndexToOriginalIndex.get(j_visible);
           if (j_original === undefined || !columns[j_original]) return;
 
           if (!event.selection) { onBrush(null); return; }

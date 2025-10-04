@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeSelectedStateHash } from '../../components/ScatterPlotMatrix';
+import { computeSelectedStateHash } from '../../src/utils/selectionUtils';
 
 const buildCacheKey = (selectedIds: Set<number>) =>
   `x-y-linear-linear-data-${computeSelectedStateHash(selectedIds)}-highlight`;
