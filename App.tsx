@@ -6,7 +6,7 @@ import { FileUpload } from './components/FileUpload';
 import { ControlPanel } from './components/ControlPanel';
 import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
-import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
+import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode, CrosshairNetwork } from './types';
 import { GitHubIcon } from './components/icons';
 import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 
@@ -24,6 +24,7 @@ const App: React.FC = () => {
     x: 0,
     y: 0,
   });
+  const [crosshairNetwork, setCrosshairNetwork] = useState<CrosshairNetwork>(null);
 
   const loadSampleData = useCallback(() => {
     fetch('/data/sample.csv')
@@ -181,6 +182,8 @@ const App: React.FC = () => {
               labelColumn={labelColumn}
               onPointHover={handlePointHover}
               onPointLeave={handlePointLeave}
+              crosshairNetwork={crosshairNetwork}
+              onCrosshairNetwork={setCrosshairNetwork}
             />
           </main>
         </div>

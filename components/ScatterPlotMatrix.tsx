@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import * as d3 from 'd3';
 import { useDrag, useDrop } from 'react-dnd';
-import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
+import type { DataPoint, Column, BrushSelection, FilterMode, CrosshairNetwork, CrosshairPoint } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash } from '../src/utils/selectionUtils';
@@ -17,6 +17,8 @@ interface ScatterPlotMatrixProps {
   labelColumn: string | null;
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
+  crosshairNetwork: CrosshairNetwork;
+  onCrosshairNetwork: (network: CrosshairNetwork) => void;
 }
 
 const DraggableHeader: React.FC<{
@@ -89,13 +91,17 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   showHistograms,
   labelColumn,
   onPointHover,
-  onPointLeave
+  onPointLeave,
+  crosshairNetwork,
+  onCrosshairNetwork
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const canvasRenderKeyRef = useRef<Map<string, string>>(new Map());
   const isDraggingRef = useRef(false);
+  const isXKeyDownRef = useRef(false);
+  const crosshairOverlayRef = useRef<SVGSVGElement>(null);
   const size = 150;
   const padding = 20;
 
@@ -654,6 +660,352 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, createSpatialGrid, getPointsInBrush, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
 
+  // Crosshair generation function
+  const generateCrosshairNetwork = useCallback((mouseX: number, mouseY: number, clickedPlotI: number, clickedPlotJ: number) => {
+    if (n === 0 || !visibleColumns.length) return null;
+
+    const tolerance = 3;
+    const maxCascadeLevels = 5;
+
+    const network: CrosshairNetwork = {
+      originX: mouseX,
+      originY: mouseY,
+      originPlotI: clickedPlotI,
+      originPlotJ: clickedPlotJ,
+      horizontalLines: [],
+      verticalLines: [],
+      cascadeLevel: 0
+    };
+
+    const processedPoints = new Set<string>();
+    const currentLevel = {
+      horizontalLines: [] as { plotI: number; plotJ: number; y: number; points: CrosshairPoint[] }[],
+      verticalLines: [] as { plotI: number; plotJ: number; x: number; points: CrosshairPoint[] }[]
+    };
+
+    // First, create the initial crosshair lines from the click point
+    for (let i = 0; i < n; i++) {
+      if (i !== clickedPlotI) {
+        // Horizontal line through clicked row
+        const line = { plotI: i, plotJ: clickedPlotJ, y: mouseY, points: [] as CrosshairPoint[] };
+
+        const iOriginal = visibleIndexToOriginalIndex.get(i);
+        const jOriginal = visibleIndexToOriginalIndex.get(clickedPlotJ);
+        if (iOriginal === undefined || jOriginal === undefined) continue;
+
+        const colX = columns[iOriginal];
+        const colY = columns[jOriginal];
+        if (!colX || !colY) continue;
+
+        // Find points intersecting with this horizontal line
+        data.forEach(d => {
+          const x = +d[colX.name];
+          const y = +d[colY.name];
+          if (!isFinite(x) || !isFinite(y)) return;
+
+          const screenX = xScales[i](x);
+          const screenY = yScales[clickedPlotJ](y);
+
+          if (Math.abs(screenY - mouseY) <= tolerance) {
+            const point: CrosshairPoint = {
+              x: screenX,
+              y: screenY,
+              plotI: i,
+              plotJ: clickedPlotJ,
+              dataId: d.__id
+            };
+            line.points.push(point);
+            processedPoints.add(`${d.__id}-${i}-${clickedPlotJ}`);
+          }
+        });
+
+        if (line.points.length > 0) {
+          currentLevel.horizontalLines.push(line);
+        }
+      }
+
+      if (i !== clickedPlotJ) {
+        // Vertical line through clicked column
+        const line = { plotI: clickedPlotI, plotJ: i, x: mouseX, points: [] as CrosshairPoint[] };
+
+        const iOriginal = visibleIndexToOriginalIndex.get(clickedPlotI);
+        const jOriginal = visibleIndexToOriginalIndex.get(i);
+        if (iOriginal === undefined || jOriginal === undefined) continue;
+
+        const colX = columns[iOriginal];
+        const colY = columns[jOriginal];
+        if (!colX || !colY) continue;
+
+        // Find points intersecting with this vertical line
+        data.forEach(d => {
+          const x = +d[colX.name];
+          const y = +d[colY.name];
+          if (!isFinite(x) || !isFinite(y)) return;
+
+          const screenX = xScales[clickedPlotI](x);
+          const screenY = yScales[i](y);
+
+          if (Math.abs(screenX - mouseX) <= tolerance) {
+            const point: CrosshairPoint = {
+              x: screenX,
+              y: screenY,
+              plotI: clickedPlotI,
+              plotJ: i,
+              dataId: d.__id
+            };
+            line.points.push(point);
+            processedPoints.add(`${d.__id}-${clickedPlotI}-${i}`);
+          }
+        });
+
+        if (line.points.length > 0) {
+          currentLevel.verticalLines.push(line);
+        }
+      }
+    }
+
+    network.horizontalLines = [...currentLevel.horizontalLines];
+    network.verticalLines = [...currentLevel.verticalLines];
+
+    // Generate cascading lines from intersection points
+    for (let level = 1; level < maxCascadeLevels; level++) {
+      const nextLevel = {
+        horizontalLines: [] as { plotI: number; plotJ: number; y: number; points: CrosshairPoint[] }[],
+        verticalLines: [] as { plotI: number; plotJ: number; x: number; points: CrosshairPoint[] }[]
+      };
+
+      // From horizontal line points, shoot vertical lines
+      currentLevel.horizontalLines.forEach(hLine => {
+        hLine.points.forEach(point => {
+          for (let j = 0; j < n; j++) {
+            if (j === point.plotJ) continue;
+
+            const vLine = { plotI: point.plotI, plotJ: j, x: point.x, points: [] as CrosshairPoint[] };
+
+            const iOriginal = visibleIndexToOriginalIndex.get(point.plotI);
+            const jOriginal = visibleIndexToOriginalIndex.get(j);
+            if (iOriginal === undefined || jOriginal === undefined) continue;
+
+            const colX = columns[iOriginal];
+            const colY = columns[jOriginal];
+            if (!colX || !colY) continue;
+
+            // Find data point for this intersection
+            const dataPoint = data.find(d => d.__id === point.dataId);
+            if (!dataPoint) continue;
+
+            const screenX = xScales[point.plotI](+dataPoint[colX.name]);
+            const screenY = yScales[j](+dataPoint[colY.name]);
+
+            if (Math.abs(screenX - point.x) <= tolerance) {
+              const newPoint: CrosshairPoint = {
+                x: screenX,
+                y: screenY,
+                plotI: point.plotI,
+                plotJ: j,
+                dataId: point.dataId
+              };
+              const pointKey = `${point.dataId}-${point.plotI}-${j}`;
+              if (!processedPoints.has(pointKey)) {
+                vLine.points.push(newPoint);
+                processedPoints.add(pointKey);
+              }
+            }
+
+            if (vLine.points.length > 0) {
+              nextLevel.verticalLines.push(vLine);
+            }
+          }
+        });
+      });
+
+      // From vertical line points, shoot horizontal lines
+      currentLevel.verticalLines.forEach(vLine => {
+        vLine.points.forEach(point => {
+          for (let i = 0; i < n; i++) {
+            if (i === point.plotI) continue;
+
+            const hLine = { plotI: i, plotJ: point.plotJ, y: point.y, points: [] as CrosshairPoint[] };
+
+            const iOriginal = visibleIndexToOriginalIndex.get(i);
+            const jOriginal = visibleIndexToOriginalIndex.get(point.plotJ);
+            if (iOriginal === undefined || jOriginal === undefined) continue;
+
+            const colX = columns[iOriginal];
+            const colY = columns[jOriginal];
+            if (!colX || !colY) continue;
+
+            // Find data point for this intersection
+            const dataPoint = data.find(d => d.__id === point.dataId);
+            if (!dataPoint) continue;
+
+            const screenX = xScales[i](+dataPoint[colX.name]);
+            const screenY = yScales[point.plotJ](+dataPoint[colY.name]);
+
+            if (Math.abs(screenY - point.y) <= tolerance) {
+              const newPoint: CrosshairPoint = {
+                x: screenX,
+                y: screenY,
+                plotI: i,
+                plotJ: point.plotJ,
+                dataId: point.dataId
+              };
+              const pointKey = `${point.dataId}-${i}-${point.plotJ}`;
+              if (!processedPoints.has(pointKey)) {
+                hLine.points.push(newPoint);
+                processedPoints.add(pointKey);
+              }
+            }
+
+            if (hLine.points.length > 0) {
+              nextLevel.horizontalLines.push(hLine);
+            }
+          }
+        });
+      });
+
+      // Add new lines to network
+      network.horizontalLines.push(...nextLevel.horizontalLines);
+      network.verticalLines.push(...nextLevel.verticalLines);
+
+      // If no new lines were generated, stop cascading
+      if (nextLevel.horizontalLines.length === 0 && nextLevel.verticalLines.length === 0) {
+        break;
+      }
+
+      // Prepare for next iteration
+      Object.assign(currentLevel, nextLevel);
+      network.cascadeLevel = level;
+    }
+
+    return network;
+  }, [data, columns, visibleColumns, visibleIndexToOriginalIndex, xScales, yScales, n]);
+
+  // Keyboard event handlers
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'x' && !e.repeat) {
+        isXKeyDownRef.current = true;
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'x') {
+        isXKeyDownRef.current = false;
+        onCrosshairNetwork(null); // Clear crosshair when X is released
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+    };
+  }, [onCrosshairNetwork]);
+
+  // Mouse event handler for crosshair generation
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isXKeyDownRef.current) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Determine which plot cell we're in
+    const plotI = Math.floor(mouseX / size);
+    const plotJ = Math.floor(mouseY / size);
+
+    if (plotI < 0 || plotI >= n || plotJ < 0 || plotJ >= n) return;
+
+    // Calculate relative position within the plot
+    const relativeX = mouseX - plotI * size;
+    const relativeY = mouseY - plotJ * size;
+
+    const network = generateCrosshairNetwork(relativeX, relativeY, plotI, plotJ);
+    onCrosshairNetwork(network);
+  }, [size, n, generateCrosshairNetwork, onCrosshairNetwork]);
+
+  // Render crosshair network overlay
+  useEffect(() => {
+    if (!crosshairOverlayRef.current || !crosshairNetwork) return;
+
+    const svg = d3.select(crosshairOverlayRef.current);
+    svg.selectAll("*").remove();
+
+    const g = svg.append("g");
+
+    // Render horizontal lines
+    crosshairNetwork.horizontalLines.forEach((line, index) => {
+      const lineGroup = g.append("g")
+        .attr("transform", `translate(${line.plotI * size}, ${line.plotJ * size})`);
+
+      // Main horizontal line
+      lineGroup.append("line")
+        .attr("x1", padding / 2)
+        .attr("y1", line.y)
+        .attr("x2", size - padding / 2)
+        .attr("y2", line.y)
+        .attr("stroke", "#ff0000")
+        .attr("stroke-width", 1)
+        .attr("opacity", Math.max(0.2, 1 - index * 0.1));
+
+      // Points along the line
+      line.points.forEach(point => {
+        lineGroup.append("circle")
+          .attr("cx", point.x)
+          .attr("cy", point.y)
+          .attr("r", 4)
+          .attr("fill", "#ff0000")
+          .attr("stroke", "#ffffff")
+          .attr("stroke-width", 1)
+          .attr("opacity", Math.max(0.3, 1 - index * 0.1));
+      });
+    });
+
+    // Render vertical lines
+    crosshairNetwork.verticalLines.forEach((line, index) => {
+      const lineGroup = g.append("g")
+        .attr("transform", `translate(${line.plotI * size}, ${line.plotJ * size})`);
+
+      // Main vertical line
+      lineGroup.append("line")
+        .attr("x1", line.x)
+        .attr("y1", padding / 2)
+        .attr("x2", line.x)
+        .attr("y2", size - padding / 2)
+        .attr("stroke", "#ff0000")
+        .attr("stroke-width", 1)
+        .attr("opacity", Math.max(0.2, 1 - index * 0.1));
+
+      // Points along the line
+      line.points.forEach(point => {
+        lineGroup.append("circle")
+          .attr("cx", point.x)
+          .attr("cy", point.y)
+          .attr("r", 4)
+          .attr("fill", "#ff0000")
+          .attr("stroke", "#ffffff")
+          .attr("stroke-width", 1)
+          .attr("opacity", Math.max(0.3, 1 - index * 0.1));
+      });
+    });
+
+    // Render origin point
+    const originGroup = g.append("g")
+      .attr("transform", `translate(${crosshairNetwork.originPlotI * size}, ${crosshairNetwork.originPlotJ * size})`);
+
+    originGroup.append("circle")
+      .attr("cx", crosshairNetwork.originX)
+      .attr("cy", crosshairNetwork.originY)
+      .attr("r", 6)
+      .attr("fill", "#ff0000")
+      .attr("stroke", "#ffffff")
+      .attr("stroke-width", 2);
+
+  }, [crosshairNetwork, size, padding]);
+
   return (
     <div className="w-full h-full relative">
       <div
@@ -706,6 +1058,32 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         }}
       />
       <svg id="scatterplot-matrix-svg" ref={ref} width={plotSize} height={plotSize}></svg>
+      {/* Crosshair network overlay */}
+      <svg
+        ref={crosshairOverlayRef}
+        width={plotSize}
+        height={plotSize}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          pointerEvents: 'none',
+          zIndex: 10
+        }}
+      />
+      {/* Mouse event capture layer */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: plotSize,
+          height: plotSize,
+          pointerEvents: 'auto',
+          zIndex: 5
+        }}
+        onMouseMove={handleMouseMove}
+      />
     </div>
   );
 };

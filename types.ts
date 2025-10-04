@@ -27,3 +27,21 @@ export type BrushSelection = {
 } | null;
 
 export type FilterMode = 'highlight' | 'filter';
+
+export type CrosshairPoint = {
+  x: number;
+  y: number;
+  plotI: number;
+  plotJ: number;
+  dataId: number;
+};
+
+export type CrosshairNetwork = {
+  originX: number;
+  originY: number;
+  originPlotI: number;
+  originPlotJ: number;
+  horizontalLines: { plotI: number; plotJ: number; y: number; points: CrosshairPoint[] }[];
+  verticalLines: { plotI: number; plotJ: number; x: number; points: CrosshairPoint[] }[];
+  cascadeLevel: number;
+} | null;
