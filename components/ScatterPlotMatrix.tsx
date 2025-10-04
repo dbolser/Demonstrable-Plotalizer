@@ -4,6 +4,7 @@ import { useDrag, useDrop } from 'react-dnd';
 import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
+import { computeSelectedStateHash } from '../src/utils/selectionUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -17,16 +18,6 @@ interface ScatterPlotMatrixProps {
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
 }
-
-export const computeSelectedStateHash = (selectedIds: Set<number>): string => {
-  if (selectedIds.size === 0) {
-    return '0:';
-  }
-
-  const sortedIds = Array.from(selectedIds).sort((a, b) => a - b);
-
-  return `${sortedIds.length}:${sortedIds.join(',')}`;
-};
 
 const DraggableHeader: React.FC<{
   name: string,
@@ -235,20 +226,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return `${data.length}-${firstId}-${lastId}`;
   }, [data]);
 
-  const selectedStateHash = useMemo(() => {
-    if (selectedIds.size === 0) return 'none';
-    let index = 0;
-    let sample = '';
-    for (const id of selectedIds) {
-      if (index < 10) {
-        sample += index === 0 ? `${id}` : `,${id}`;
-      } else {
-        break;
-      }
-      index += 1;
-    }
-    return `${selectedIds.size}-${sample}`;
-  }, [selectedIds]);
+  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
 
   const columnStats = useMemo(() => {
     const stats = new Map<string, { min: number; max: number; minPositive: number }>();

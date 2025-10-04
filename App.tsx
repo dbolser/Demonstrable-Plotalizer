@@ -129,9 +129,20 @@ const App: React.FC = () => {
         <Tooltip content={tooltip.content} x={tooltip.x} y={tooltip.y} visible={tooltip.visible} />
         <header className="bg-brand-dark text-white p-4 shadow-md flex justify-between items-center">
           <h1 className="text-2xl font-bold">Interactive Scatter Plot Matrix</h1>
-           <a href="https://github.com/your-repo" target="_blank" rel="noopener noreferrer" className="text-white hover:text-brand-secondary">
-             <GitHubIcon className="h-8 w-8" />
-           </a>
+          <div className="flex items-center space-x-4">
+            {brushSelection && (
+              <button
+                onClick={() => setBrushSelection(null)}
+                className="px-3 py-1 bg-red-600 hover:bg-red-700 text-white rounded"
+                title="Clear selection (Esc)"
+              >
+                ✕ Clear
+              </button>
+            )}
+            <a href="https://github.com/your-repo" target="_blank" rel="noopener noreferrer" className="text-white hover:text-brand-secondary">
+              <GitHubIcon className="h-8 w-8" />
+            </a>
+          </div>
         </header>
         <div className="flex flex-1 overflow-hidden">
           <aside className="w-64 bg-white p-4 overflow-y-auto shadow-lg">
