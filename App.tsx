@@ -149,7 +149,7 @@ const App: React.FC = () => {
                 ✕ Clear
               </button>
             )}
-            <a href="https://github.com/your-repo" target="_blank" rel="noopener noreferrer" className="text-white hover:text-brand-secondary">
+            <a href="https://github.com/dbolser/Demonstrable-Plotalizer" target="_blank" rel="noopener noreferrer" className="text-white hover:text-brand-secondary">
               <GitHubIcon className="h-8 w-8" />
             </a>
           </div>
