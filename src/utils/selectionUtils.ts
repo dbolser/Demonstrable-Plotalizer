@@ -22,7 +22,6 @@ export function createSpatialGrid(
     xCol: string,
     yCol: string,
     size: number,
-    padding: number,
     gridSize = 20
 ) {
     const grid: any[][][] = Array.from({ length: gridSize }, () =>
@@ -34,8 +33,9 @@ export function createSpatialGrid(
         if (!isFinite(x) || !isFinite(y)) return;
         const sx = xScale(x);
         const sy = yScale(y);
-        const gx = Math.floor(((sx - padding / 2) / (size - padding)) * gridSize);
-        const gy = Math.floor(((sy - padding / 2) / (size - padding)) * gridSize);
+        // Map screen coordinates [0, size] to grid cells [0, gridSize-1]
+        const gx = Math.floor((sx / size) * gridSize);
+        const gy = Math.floor((sy / size) * gridSize);
         if (gx >= 0 && gx < gridSize && gy >= 0 && gy < gridSize) {
             grid[gx][gy].push(d);
         }
@@ -54,14 +54,15 @@ export function getPointsInBrush(
     xCol: string,
     yCol: string,
     size: number,
-    padding: number,
     gridSize = 20
 ): Set<number> {
     const selected = new Set<number>();
-    const startGX = Math.max(0, Math.floor(((x0 - padding / 2) / (size - padding)) * gridSize));
-    const endGX = Math.min(gridSize - 1, Math.floor(((x1 - padding / 2) / (size - padding)) * gridSize));
-    const startGY = Math.max(0, Math.floor(((y0 - padding / 2) / (size - padding)) * gridSize));
-    const endGY = Math.min(gridSize - 1, Math.floor(((y1 - padding / 2) / (size - padding)) * gridSize));
+    // Map brush coordinates to grid cells
+    // Since brush covers [0, size], we map that range to [0, gridSize-1]
+    const startGX = Math.max(0, Math.floor((x0 / size) * gridSize));
+    const endGX = Math.min(gridSize - 1, Math.ceil((x1 / size) * gridSize));
+    const startGY = Math.max(0, Math.floor((y0 / size) * gridSize));
+    const endGY = Math.min(gridSize - 1, Math.ceil((y1 / size) * gridSize));
     for (let gx = startGX; gx <= endGX; gx++) {
         for (let gy = startGY; gy <= endGY; gy++) {
             for (const d of grid[gx][gy]) {

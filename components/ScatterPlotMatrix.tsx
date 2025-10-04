@@ -123,8 +123,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
       const screenX = xScale(x);
       const screenY = yScale(y);
-      const gridX = Math.floor((screenX - padding / 2) / (size - padding) * gridSize);
-      const gridY = Math.floor((screenY - padding / 2) / (size - padding) * gridSize);
+      // Map screen coordinates [0, size] to grid cells [0, gridSize-1]
+      const gridX = Math.floor((screenX / size) * gridSize);
+      const gridY = Math.floor((screenY / size) * gridSize);
 
       if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
         grid[gridX][gridY].push(d);
@@ -132,17 +133,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     return grid;
-  }, [size, padding]);
+  }, [size]);
 
   // Fast brush selection using spatial grid
   const getPointsInBrush = useCallback((grid: DataPoint[][][], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, x0: number, y0: number, x1: number, y1: number, xCol: string, yCol: string) => {
     const gridSize = 20;
     const selectedIds = new Set<number>();
 
-    const startGridX = Math.max(0, Math.floor((x0 - padding / 2) / (size - padding) * gridSize));
-    const endGridX = Math.min(gridSize - 1, Math.floor((x1 - padding / 2) / (size - padding) * gridSize));
-    const startGridY = Math.max(0, Math.floor((y0 - padding / 2) / (size - padding) * gridSize));
-    const endGridY = Math.min(gridSize - 1, Math.floor((y1 - padding / 2) / (size - padding) * gridSize));
+    // Map brush coordinates to grid cells
+    // Since brush now covers [0, size], we need to map that range to [0, gridSize-1]
+    const startGridX = Math.max(0, Math.floor((x0 / size) * gridSize));
+    const endGridX = Math.min(gridSize - 1, Math.ceil((x1 / size) * gridSize));
+    const startGridY = Math.max(0, Math.floor((y0 / size) * gridSize));
+    const endGridY = Math.min(gridSize - 1, Math.ceil((y1 / size) * gridSize));
 
     for (let gx = startGridX; gx <= endGridX; gx++) {
       for (let gy = startGridY; gy <= endGridY; gy++) {
@@ -160,7 +163,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     }
 
     return selectedIds;
-  }, [size, padding]);
+  }, [size]);
 
   // Canvas rendering function
   const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {

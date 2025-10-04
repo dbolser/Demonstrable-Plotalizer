@@ -18,7 +18,7 @@ describe('spatial grid selection', () => {
   const yScale = d3.scaleLinear().domain([0, 99]).range([size - padding / 2, padding / 2]);
 
   it('selects correct ids within brush bounds', () => {
-    const grid = createSpatialGrid(data, xScale, yScale, xCol, yCol, size, padding);
+    const grid = createSpatialGrid(data, xScale, yScale, xCol, yCol, size);
     const ids = getPointsInBrush(
       grid,
       xScale,
@@ -29,8 +29,7 @@ describe('spatial grid selection', () => {
       yScale(10),
       xCol,
       yCol,
-      size,
-      padding
+      size
     );
     expect(ids.size).toBeGreaterThan(0);
     expect(ids.has(15)).toBe(true);
