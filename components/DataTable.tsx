@@ -73,8 +73,8 @@ export const DataTable: React.FC<DataTableProps> = ({
   }
 
   return (
-    <div className="bg-white border-t border-gray-200 p-4">
-      <div className="flex justify-between items-center mb-3">
+      <div className="bg-white border-t border-gray-200 p-4 h-full flex flex-col overflow-hidden">
+          <div className="flex justify-between items-center mb-3 flex-shrink-0">
         <h3 className="text-lg font-semibold text-gray-800">
           Selected Data ({totalRows.toLocaleString()} row{totalRows !== 1 ? 's' : ''})
         </h3>
@@ -101,7 +101,7 @@ export const DataTable: React.FC<DataTableProps> = ({
         )}
       </div>
 
-      <div className="overflow-x-auto border border-gray-300 rounded-lg">
+          <div className="overflow-auto border border-gray-300 rounded-lg flex-1">
         <table className="min-w-full divide-y divide-gray-300">
           <thead className="bg-gray-50">
             <tr>
@@ -166,7 +166,7 @@ export const DataTable: React.FC<DataTableProps> = ({
         </table>
       </div>
 
-      <div className="mt-2 text-xs text-gray-500">
+          <div className="mt-2 text-xs text-gray-500 flex-shrink-0">
         Showing {startIdx + 1}-{endIdx} of {totalRows.toLocaleString()} row{totalRows !== 1 ? 's' : ''}
       </div>
     </div>

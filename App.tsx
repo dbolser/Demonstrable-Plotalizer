@@ -115,9 +115,40 @@ const App: React.FC = () => {
   };
 
   // Compute data to show in the table (only selected points if there's a selection)
-  const tableData = brushSelection?.selectedIds
+  const tableData = brushSelection?.selectedIds 
     ? data.filter(row => brushSelection.selectedIds.has(row.__id))
     : [];
+
+  // Resizable table panel
+  const [tableHeight, setTableHeight] = useState(300); // pixels
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const mainElement = document.querySelector('main');
+      if (!mainElement) return;
+
+      const mainRect = mainElement.getBoundingClientRect();
+      const newHeight = mainRect.bottom - e.clientY;
+      // Clamp between 100px and 80% of main height
+      const maxHeight = mainRect.height * 0.8;
+      setTableHeight(Math.max(100, Math.min(maxHeight, newHeight)));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
   if (!columns.length) {
     return (
@@ -176,7 +207,13 @@ const App: React.FC = () => {
             />
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
-            <div className="p-4 overflow-auto">
+            <div
+              className="p-4 overflow-auto"
+              style={{
+                flex: tableData.length > 0 ? '1 1 auto' : '1 1 0',
+                minHeight: 0
+              }}
+            >
               <ScatterPlotMatrix
                 data={data}
                 columns={columns}
@@ -191,11 +228,25 @@ const App: React.FC = () => {
               />
             </div>
             {tableData.length > 0 && (
-              <DataTable
-                data={tableData}
-                columns={columns}
-                labelColumn={labelColumn}
-              />
+              <>
+                <div
+                  className="h-2 bg-gray-300 hover:bg-brand-primary cursor-row-resize flex items-center justify-center transition-colors"
+                  onMouseDown={() => setIsDragging(true)}
+                  title="Drag to resize table"
+                >
+                  <div className="w-12 h-1 bg-gray-500 rounded"></div>
+                </div>
+                <div
+                  style={{ height: `${tableHeight}px`, minHeight: '100px', maxHeight: '80%' }}
+                  className="overflow-hidden"
+                >
+                  <DataTable
+                    data={tableData}
+                    columns={columns}
+                    labelColumn={labelColumn}
+                  />
+                </div>
+              </>
             )}
           </main>
         </div>
