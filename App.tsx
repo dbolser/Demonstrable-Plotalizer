@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import Papa from 'papaparse';
@@ -8,7 +8,7 @@ import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
 import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
 import { GitHubIcon } from './components/icons';
-import { reorderColumns, filterColumns } from './src/utils/columnUtils';
+import { reorderColumns, filterColumns, sortColumnsByVisibility } from './src/utils/columnUtils';
 
 const App: React.FC = () => {
   const [data, setData] = useState<DataPoint[]>([]);
@@ -24,6 +24,9 @@ const App: React.FC = () => {
     x: 0,
     y: 0,
   });
+  const [useUniformLogBins, setUseUniformLogBins] = useState<boolean>(false);
+  const [globalLogScale, setGlobalLogScale] = useState<boolean>(false);
+  const previousScalesRef = useRef<{ byName: Map<string, ScaleType>; byIndex: ScaleType[] } | null>(null);
 
   const loadSampleData = useCallback(() => {
     fetch('/data/sample.csv')
@@ -66,10 +69,11 @@ const App: React.FC = () => {
       .filter(key => typeof dataWithIds[0][key] === 'number' && key !== '__id')
       .map(key => ({
         name: key,
-        scale: 'linear' as ScaleType,
+        scale: globalLogScale ? 'log' : ('linear' as ScaleType),
         visible: true,
       }));
     setColumns(numericColumns);
+    previousScalesRef.current = null;
     setBrushSelection(null);
   };
 
@@ -80,7 +84,13 @@ const App: React.FC = () => {
   const handleColumnUpdate = (index: number, updatedColumn: Column) => {
     setColumns(prevColumns => {
       const newColumns = [...prevColumns];
+      const previousColumn = prevColumns[index];
       newColumns[index] = updatedColumn;
+
+      if (previousColumn?.visible !== updatedColumn.visible) {
+        return sortColumnsByVisibility(newColumns);
+      }
+
       return newColumns;
     });
   };
@@ -101,6 +111,27 @@ const App: React.FC = () => {
   const handleColumnFilterChange = (filter: string) => {
     setColumnFilter(filter);
     setColumns(prevColumns => filterColumns(prevColumns, filter));
+  };
+
+  const handleGlobalLogScaleToggle = (useLog: boolean) => {
+    setGlobalLogScale(useLog);
+    setColumns(prevColumns => {
+      if (useLog) {
+        previousScalesRef.current = {
+          byName: new Map(prevColumns.map(col => [col.name, col.scale])),
+          byIndex: prevColumns.map(col => col.scale),
+        };
+        return prevColumns.map(col => ({ ...col, scale: 'log' as ScaleType }));
+      }
+
+      const previous = previousScalesRef.current;
+      previousScalesRef.current = null;
+
+      return prevColumns.map((col, index) => {
+        const restored = previous?.byName.get(col.name) ?? previous?.byIndex[index] ?? 'linear';
+        return { ...col, scale: restored };
+      });
+    });
   };
 
   if (!columns.length) {
@@ -143,6 +174,10 @@ const App: React.FC = () => {
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
               setShowHistograms={setShowHistograms}
+              useUniformLogBins={useUniformLogBins}
+              setUseUniformLogBins={setUseUniformLogBins}
+              globalLogScale={globalLogScale}
+              onToggleGlobalLogScale={handleGlobalLogScaleToggle}
               labelColumn={labelColumn}
               columnFilter={columnFilter}
               onColumnFilterChange={handleColumnFilterChange}
@@ -157,6 +192,7 @@ const App: React.FC = () => {
               onBrush={setBrushSelection}
               filterMode={filterMode}
               showHistograms={showHistograms}
+              useUniformLogBins={useUniformLogBins}
               labelColumn={labelColumn}
               onPointHover={handlePointHover}
               onPointLeave={handlePointLeave}

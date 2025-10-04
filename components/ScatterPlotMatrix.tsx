@@ -13,6 +13,7 @@ interface ScatterPlotMatrixProps {
   onBrush: (selection: BrushSelection) => void;
   filterMode: FilterMode;
   showHistograms: boolean;
+  useUniformLogBins: boolean;
   labelColumn: string | null;
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
@@ -96,6 +97,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onBrush,
   filterMode,
   showHistograms,
+  useUniformLogBins,
   labelColumn,
   onPointHover,
   onPointLeave
@@ -119,6 +121,62 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const selectedIds = useMemo(() => {
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
+
+  const computeHistogramBins = useCallback(
+    (
+      values: number[],
+      selectedValues: number[],
+      domain: [number, number],
+      column: Column
+    ) => {
+      const safeDomainStart = Math.min(domain[0], domain[1]);
+      const safeDomainEnd = Math.max(domain[0], domain[1]);
+
+      if (column.scale === 'log' && useUniformLogBins) {
+        const positiveValues = values.filter(v => v > 0);
+        const positiveSelectedValues = selectedValues.filter(v => v > 0);
+
+        let minPositive = d3.min(positiveValues);
+        if (minPositive === undefined || minPositive <= 0) {
+          minPositive = safeDomainStart > 0 ? safeDomainStart : 1e-9;
+        }
+
+        let maxPositive = d3.max(positiveValues);
+        if (maxPositive === undefined || !(maxPositive > minPositive)) {
+          const fallback = safeDomainEnd > minPositive ? safeDomainEnd : minPositive * 10;
+          maxPositive = fallback;
+        }
+
+        if (!(maxPositive > minPositive)) {
+          maxPositive = minPositive * 10;
+        }
+
+        const logDomain: [number, number] = [Math.log10(minPositive), Math.log10(maxPositive)];
+        const logBinGenerator = d3.bin().domain(logDomain).thresholds(20);
+        const allLogBins = logBinGenerator(positiveValues.map(v => Math.log10(v)));
+        const selectedLogBins = logBinGenerator(positiveSelectedValues.map(v => Math.log10(v)));
+
+        return allLogBins.map((bin, index) => ({
+          x0: bin.x0 !== undefined ? Math.pow(10, bin.x0) : minPositive,
+          x1: bin.x1 !== undefined ? Math.pow(10, bin.x1) : maxPositive,
+          totalLength: bin.length,
+          selectedLength: selectedLogBins[index]?.length || 0,
+        }));
+      }
+
+      const linearBinGenerator = d3.bin().domain([safeDomainStart, safeDomainEnd]).thresholds(20);
+      const allBins = linearBinGenerator(values);
+      const selectedBins = linearBinGenerator(selectedValues);
+
+      return allBins.map((bin, index) => ({
+        x0: bin.x0,
+        x1: bin.x1,
+        totalLength: bin.length,
+        selectedLength: selectedBins[index]?.length || 0,
+      }));
+    },
+    [useUniformLogBins]
+  );
 
   // Spatial grid for fast brush selection
   const createSpatialGrid = useCallback((data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string) => {
@@ -260,7 +318,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       return stats;
     }
 
-    for (const row of data) {
+    const domainSource = filterMode === 'filter' ? filteredData : data;
+
+    for (const row of domainSource) {
       for (const col of visibleColumns) {
         const value = +row[col.name];
         if (!isFinite(value)) continue;
@@ -285,7 +345,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     return stats;
-  }, [data, visibleColumns]);
+  }, [data, visibleColumns, filterMode, filteredData]);
 
   const createScale = useCallback(
     (column: Column, range: [number, number]) => {
@@ -337,9 +397,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     const svg = d3.select(ref.current);
     svg.selectAll("*").remove(); // Clear previous render
 
+    const domainSource = filterMode === 'filter' ? filteredData : data;
+
     const createScale = (c: Column, range: [number, number]) => {
       // Force coercion to number and filter out non-finite values
-      const values = data.map(d => +d[c.name]).filter(isFinite);
+      const values = domainSource.map(d => +d[c.name]).filter(isFinite);
       const extent = d3.extent(values);
 
       let domain: [number, number] = [0, 1];
@@ -408,7 +470,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         if (!colX || !colY) return;
 
         // Create spatial grid for fast selection
-        const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name);
+        const grid = createSpatialGrid(domainSource, xScales[i_visible], yScales[j_visible], colX.name, colY.name);
         const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
       });
@@ -528,7 +590,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const newSelectedIds = new Set<number>();
           const minVal = xScales[i_visible].invert(x0);
           const maxVal = xScales[i_visible].invert(x1);
-          for (const d of data) {
+          for (const d of domainSource) {
             const val = +d[columns[i_original].name];
             if (val >= minVal && val <= maxVal) newSelectedIds.add(d.__id);
           }
@@ -545,17 +607,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const allValues = filteredData.map(d => +d[columns[i_original].name]).filter(isFinite);
         const selectedValues = selectedData.map(d => +d[columns[i_original].name]).filter(isFinite);
 
-        const domain = xScales[i_visible].domain();
-        const binGenerator = d3.bin().domain([Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])]).thresholds(20);
-
-        const allBins = binGenerator(allValues);
-        const selectedBins = binGenerator(selectedValues);
-
-        const combinedBins = allBins.map((bin, index) => ({
-          x0: bin.x0, x1: bin.x1,
-          totalLength: bin.length,
-          selectedLength: selectedBins[index]?.length || 0
-        }));
+        const domain = xScales[i_visible].domain() as [number, number];
+        const combinedBins = computeHistogramBins(allValues, selectedValues, domain, columns[i_original]);
 
         const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins, d => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
 
@@ -592,7 +645,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           // Faster selection for Y histogram brush
           const minVal = yScales[j_visible].invert(y1);
           const maxVal = yScales[j_visible].invert(y0);
-          for (const d of data) {
+          for (const d of domainSource) {
             const val = +d[columns[j_original].name];
             if (val >= minVal && val <= maxVal) newSelectedIds.add(d.__id);
           }
@@ -609,17 +662,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const allValues = filteredData.map(d => +d[columns[j_original].name]).filter(isFinite);
         const selectedValues = selectedData.map(d => +d[columns[j_original].name]).filter(isFinite);
 
-        const domain = yScales[j_visible].domain();
-        const binGenerator = d3.bin().domain([Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])]).thresholds(20);
-
-        const allBins = binGenerator(allValues);
-        const selectedBins = binGenerator(selectedValues);
-
-        const combinedBins = allBins.map((bin, index) => ({
-          x0: bin.x0, x1: bin.x1,
-          totalLength: bin.length,
-          selectedLength: selectedBins[index]?.length || 0
-        }));
+        const domain = yScales[j_visible].domain() as [number, number];
+        const combinedBins = computeHistogramBins(allValues, selectedValues, domain, columns[j_original]);
 
         const xHist = d3.scaleLinear().domain([0, d3.max(combinedBins, d => d.totalLength) || 1]).range([padding / 2, size - padding / 2]);
         const g = d3.select(this);
@@ -674,7 +718,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, createSpatialGrid, getPointsInBrush, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, createSpatialGrid, getPointsInBrush, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, computeHistogramBins]);
 
   return (
     <div className="w-full h-full relative">

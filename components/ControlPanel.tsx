@@ -11,6 +11,10 @@ interface ControlPanelProps {
   setFilterMode: (mode: FilterMode) => void;
   showHistograms: boolean;
   setShowHistograms: (show: boolean) => void;
+  useUniformLogBins: boolean;
+  setUseUniformLogBins: (useUniform: boolean) => void;
+  globalLogScale: boolean;
+  onToggleGlobalLogScale: (useLog: boolean) => void;
   labelColumn: string | null;
   columnFilter: string;
   onColumnFilterChange: (filter: string) => void;
@@ -24,6 +28,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setFilterMode,
   showHistograms,
   setShowHistograms,
+  useUniformLogBins,
+  setUseUniformLogBins,
+  globalLogScale,
+  onToggleGlobalLogScale,
   labelColumn,
   columnFilter,
   onColumnFilterChange,
@@ -109,6 +117,28 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
             />
           </div>
+          {showHistograms && (
+            <div className="flex items-center justify-between">
+              <label htmlFor="uniformLogBins" className="font-semibold text-gray-700">Uniform Log Bins</label>
+              <input
+                type="checkbox"
+                id="uniformLogBins"
+                checked={useUniformLogBins}
+                onChange={(e) => setUseUniformLogBins(e.target.checked)}
+                className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
+              />
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <label htmlFor="globalLogScale" className="font-semibold text-gray-700">Log Scale All Axes</label>
+            <input
+              type="checkbox"
+              id="globalLogScale"
+              checked={globalLogScale}
+              onChange={(e) => onToggleGlobalLogScale(e.target.checked)}
+              className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
+            />
+          </div>
            <button
              onClick={handleDownloadSVG}
              className="w-full mt-4 px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
@@ -154,7 +184,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   </button>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <label htmlFor={`log-toggle-${i}`} className="font-semibold text-gray-700">
+                  <label htmlFor={`log-toggle-${i}`} className={`font-semibold ${globalLogScale ? 'text-gray-400' : 'text-gray-700'}`}>
                     Log Scale
                   </label>
                   <button
@@ -163,9 +193,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                     onClick={() => onColumnUpdate(i, { ...col, scale: col.scale === 'log' ? 'linear' : 'log' })}
                     className={`${
                       col.scale === 'log' ? 'bg-brand-primary' : 'bg-gray-200'
-                    } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2`}
+                    } relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand-primary focus:ring-offset-2 ${globalLogScale ? 'opacity-50 cursor-not-allowed' : ''}`}
                     role="switch"
                     aria-checked={col.scale === 'log'}
+                    disabled={globalLogScale}
                   >
                     <span
                       aria-hidden="true"

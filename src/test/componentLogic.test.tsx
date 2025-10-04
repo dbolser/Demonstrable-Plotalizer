@@ -48,6 +48,7 @@ describe('App Component Logic', () => {
     const visibleColumns = filteredColumns.filter(col => col.visible);
     expect(visibleColumns).toHaveLength(2);
     expect(visibleColumns.map(c => c.name)).toEqual(['n_snps_mac1', 'n_genes_mac1']);
+    expect(filteredColumns.slice(0, 2).map(c => c.name)).toEqual(['n_snps_mac1', 'n_genes_mac1']);
   });
 
   it('should handle column reordering logic', () => {

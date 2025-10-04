@@ -6,6 +6,28 @@ export function reorderColumns(columns: Column[], dragIndex: number, hoverIndex:
     return newColumns;
 }
 
+export function sortColumnsByVisibility(columns: Column[]): Column[] {
+    const visible: Column[] = [];
+    const hidden: Column[] = [];
+
+    columns.forEach(col => {
+        if (col.visible) {
+            visible.push(col);
+        } else {
+            hidden.push(col);
+        }
+    });
+
+    const sorted = [...visible, ...hidden];
+    for (let i = 0; i < columns.length; i++) {
+        if (columns[i] !== sorted[i]) {
+            return sorted;
+        }
+    }
+
+    return columns;
+}
+
 export function filterColumns(columns: Column[], filter: string): Column[] {
     const normalizedFilter = filter.trim().toLowerCase();
     const shouldShowAll = normalizedFilter === '';
@@ -25,7 +47,8 @@ export function filterColumns(columns: Column[], filter: string): Column[] {
         }
     }
 
-    return didChange ? nextColumns : columns;
+    const updatedColumns = didChange ? nextColumns : columns;
+    return sortColumnsByVisibility(updatedColumns);
 }
 
 export function mapVisibleColumns(
