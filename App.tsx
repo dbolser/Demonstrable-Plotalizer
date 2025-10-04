@@ -6,6 +6,7 @@ import { FileUpload } from './components/FileUpload';
 import { ControlPanel } from './components/ControlPanel';
 import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
+import { DataTable } from './components/DataTable';
 import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
 import { GitHubIcon } from './components/icons';
 import { reorderColumns, filterColumns } from './src/utils/columnUtils';
@@ -113,6 +114,11 @@ const App: React.FC = () => {
     setColumns(prevColumns => filterColumns(prevColumns, filter));
   };
 
+  // Compute data to show in the table (only selected points if there's a selection)
+  const tableData = brushSelection?.selectedIds
+    ? data.filter(row => brushSelection.selectedIds.has(row.__id))
+    : [];
+
   if (!columns.length) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
@@ -169,19 +175,28 @@ const App: React.FC = () => {
               onColumnFilterChange={handleColumnFilterChange}
             />
           </aside>
-          <main className="flex-1 p-4 bg-gray-100 overflow-auto">
-            <ScatterPlotMatrix
-              data={data}
-              columns={columns}
-              onColumnReorder={handleColumnReorder}
-              brushSelection={brushSelection}
-              onBrush={setBrushSelection}
-              filterMode={filterMode}
-              showHistograms={showHistograms}
-              labelColumn={labelColumn}
-              onPointHover={handlePointHover}
-              onPointLeave={handlePointLeave}
-            />
+          <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
+            <div className="p-4 overflow-auto">
+              <ScatterPlotMatrix
+                data={data}
+                columns={columns}
+                onColumnReorder={handleColumnReorder}
+                brushSelection={brushSelection}
+                onBrush={setBrushSelection}
+                filterMode={filterMode}
+                showHistograms={showHistograms}
+                labelColumn={labelColumn}
+                onPointHover={handlePointHover}
+                onPointLeave={handlePointLeave}
+              />
+            </div>
+            {tableData.length > 0 && (
+              <DataTable
+                data={tableData}
+                columns={columns}
+                labelColumn={labelColumn}
+              />
+            )}
           </main>
         </div>
       </div>
