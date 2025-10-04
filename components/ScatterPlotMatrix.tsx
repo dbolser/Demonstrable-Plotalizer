@@ -231,6 +231,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
 
+  // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
+  const dataForStats = useMemo(() => {
+    return (filterMode === 'filter' && selectedIds.size > 0) ? filteredData : data;
+  }, [filterMode, selectedIds.size, filteredData, data]);
+
   const columnStats = useMemo(() => {
     const stats = new Map<string, { min: number; max: number; minPositive: number }>();
     visibleColumns.forEach(col => {
@@ -241,7 +246,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       return stats;
     }
 
-    for (const row of data) {
+    for (const row of dataForStats) {
       for (const col of visibleColumns) {
         const value = +row[col.name];
         if (!isFinite(value)) continue;
@@ -266,7 +271,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     return stats;
-  }, [data, visibleColumns]);
+  }, [dataForStats, visibleColumns]);
 
   const createScale = useCallback(
     (column: Column, range: [number, number]) => {
