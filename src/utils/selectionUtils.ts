@@ -14,3 +14,64 @@ export function computeSelectedStateHash(selectedIds: Set<number>): string {
     }
     return `${selectedIds.size}-${hash}`;
 }
+
+export function createSpatialGrid(
+    data: any[],
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    xCol: string,
+    yCol: string,
+    size: number,
+    padding: number,
+    gridSize = 20
+) {
+    const grid: any[][][] = Array.from({ length: gridSize }, () =>
+        Array.from({ length: gridSize }, () => [])
+    );
+    data.forEach((d) => {
+        const x = +d[xCol];
+        const y = +d[yCol];
+        if (!isFinite(x) || !isFinite(y)) return;
+        const sx = xScale(x);
+        const sy = yScale(y);
+        const gx = Math.floor(((sx - padding / 2) / (size - padding)) * gridSize);
+        const gy = Math.floor(((sy - padding / 2) / (size - padding)) * gridSize);
+        if (gx >= 0 && gx < gridSize && gy >= 0 && gy < gridSize) {
+            grid[gx][gy].push(d);
+        }
+    });
+    return grid;
+}
+
+export function getPointsInBrush(
+    grid: any[][][],
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    xCol: string,
+    yCol: string,
+    size: number,
+    padding: number,
+    gridSize = 20
+): Set<number> {
+    const selected = new Set<number>();
+    const startGX = Math.max(0, Math.floor(((x0 - padding / 2) / (size - padding)) * gridSize));
+    const endGX = Math.min(gridSize - 1, Math.floor(((x1 - padding / 2) / (size - padding)) * gridSize));
+    const startGY = Math.max(0, Math.floor(((y0 - padding / 2) / (size - padding)) * gridSize));
+    const endGY = Math.min(gridSize - 1, Math.floor(((y1 - padding / 2) / (size - padding)) * gridSize));
+    for (let gx = startGX; gx <= endGX; gx++) {
+        for (let gy = startGY; gy <= endGY; gy++) {
+            for (const d of grid[gx][gy]) {
+                const sx = xScale(+d[xCol]);
+                const sy = yScale(+d[yCol]);
+                if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) {
+                    selected.add(d.__id);
+                }
+            }
+        }
+    }
+    return selected;
+}

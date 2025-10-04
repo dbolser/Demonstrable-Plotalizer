@@ -108,7 +108,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const plotSize = showHistograms ? size * (n + 1) : size * n;
 
   const selectedIds = useMemo(() => {
-    return brushSelection?.selectedIds || new Set<number>();
+    const ids = brushSelection?.selectedIds || new Set<number>();
+    console.log('📊 selectedIds from brushSelection:', ids.size, 'ids');
+    return ids;
   }, [brushSelection]);
 
   // Spatial grid for fast brush selection
@@ -164,6 +166,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   // Canvas rendering function
   const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
+    console.log('🎨 renderPointsToCanvas called:', xCol, 'vs', yCol, '| selectedIds:', selectedIds.size, '| filterMode:', filterMode);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -362,32 +365,49 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     brush
       .on("end", function (event) {
+        console.log('Brush end event fired', { hasSourceEvent: !!event.sourceEvent, hasSelection: !!event.selection });
         if (!event.sourceEvent) return; // Ignore programmatic brushes
 
-        const parentNode = this.parentNode as Element;
-        if (!parentNode) return;
-
         if (!event.selection) {
+          console.log('2️⃣ No selection, clearing');
           onBrush(null);
           return;
         }
 
-        const i_visible = parseInt(d3.select(parentNode).attr("data-index-i")!, 10);
-        const j_visible = parseInt(d3.select(parentNode).attr("data-index-j")!, 10);
+        // Get the [i, j] data bound to this cell
+        const cellData = d3.select(this).datum() as [number, number];
+        console.log('3️⃣ Cell data:', cellData);
+        if (!cellData || cellData.length !== 2) {
+          console.log('❌ No cell data, returning');
+          return;
+        }
+
+        const [i_visible, j_visible] = cellData;
+        console.log('4️⃣ Cell indices:', { i_visible, j_visible });
         const i_original = visibleIndexToOriginalIndex.get(i_visible);
         const j_original = visibleIndexToOriginalIndex.get(j_visible);
+        console.log('5️⃣ Original indices:', { i_original, j_original });
 
-        if (i_original === undefined || j_original === undefined) return;
+        if (i_original === undefined || j_original === undefined) {
+          console.log('❌ Original indices undefined, returning');
+          return;
+        }
 
         const [[x0, y0], [x1, y1]] = event.selection;
+        console.log('6️⃣ Selection coords:', { x0, y0, x1, y1 });
 
         const colX = columns[i_original];
         const colY = columns[j_original];
-        if (!colX || !colY) return;
+        console.log('7️⃣ Columns:', { colX: colX?.name, colY: colY?.name });
+        if (!colX || !colY) {
+          console.log('❌ Columns not found, returning');
+          return;
+        }
 
         // Create spatial grid for fast selection
         const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name);
         const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name);
+        console.log('✅ Scatter brush end: selected', newSelectedIds.size, 'ids out of', data.length);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
       });
 
