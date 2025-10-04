@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import type { DataPoint, Column } from '../types';
 
 interface DataTableProps {
@@ -8,6 +8,11 @@ interface DataTableProps {
   maxRows?: number;
 }
 
+type SortConfig = {
+    key: string;
+    direction: 'asc' | 'desc';
+} | null;
+
 export const DataTable: React.FC<DataTableProps> = ({ 
   data, 
   columns, 
@@ -15,13 +20,53 @@ export const DataTable: React.FC<DataTableProps> = ({
   maxRows = 20 
 }) => {
   const [currentPage, setCurrentPage] = useState(0);
+    const [sortConfig, setSortConfig] = useState<SortConfig>(null);
   
   const visibleColumns = columns.filter(c => c.visible);
-  const totalRows = data.length;
+
+    // Sort data based on current sort configuration
+    const sortedData = useMemo(() => {
+        if (!sortConfig) return data;
+
+        const sorted = [...data].sort((a, b) => {
+            const aVal = a[sortConfig.key];
+            const bVal = b[sortConfig.key];
+
+            // Handle null/undefined
+            if (aVal == null && bVal == null) return 0;
+            if (aVal == null) return 1;
+            if (bVal == null) return -1;
+
+            // Compare numbers
+            if (typeof aVal === 'number' && typeof bVal === 'number') {
+                return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+            }
+
+            // Compare strings
+            const aStr = String(aVal).toLowerCase();
+            const bStr = String(bVal).toLowerCase();
+            if (aStr < bStr) return sortConfig.direction === 'asc' ? -1 : 1;
+            if (aStr > bStr) return sortConfig.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        return sorted;
+    }, [data, sortConfig]);
+
+    const totalRows = sortedData.length;
   const totalPages = Math.ceil(totalRows / maxRows);
   const startIdx = currentPage * maxRows;
   const endIdx = Math.min(startIdx + maxRows, totalRows);
-  const pageData = data.slice(startIdx, endIdx);
+    const pageData = sortedData.slice(startIdx, endIdx);
+
+    const handleSort = (key: string) => {
+        let direction: 'asc' | 'desc' = 'asc';
+        if (sortConfig && sortConfig.key === key && sortConfig.direction === 'asc') {
+            direction = 'desc';
+        }
+        setSortConfig({ key, direction });
+        setCurrentPage(0); // Reset to first page when sorting
+    };
 
   if (totalRows === 0) {
     return null;
@@ -61,16 +106,34 @@ export const DataTable: React.FC<DataTableProps> = ({
           <thead className="bg-gray-50">
             <tr>
               {labelColumn && (
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider border-r border-gray-300">
-                  {labelColumn}
+                              <th
+                                  className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider border-r border-gray-300 cursor-pointer hover:bg-gray-100 select-none"
+                                  onClick={() => handleSort(labelColumn)}
+                              >
+                                  <div className="flex items-center space-x-1">
+                                      <span>{labelColumn}</span>
+                                      {sortConfig?.key === labelColumn && (
+                                          <span className="text-brand-primary">
+                                              {sortConfig.direction === 'asc' ? '↑' : '↓'}
+                                          </span>
+                                      )}
+                                  </div>
                 </th>
               )}
               {visibleColumns.map(col => (
                 <th 
                   key={col.name} 
-                  className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider"
+                      className="px-3 py-2 text-left text-xs font-medium text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 select-none"
+                      onClick={() => handleSort(col.name)}
                 >
-                  {col.name}
+                      <div className="flex items-center space-x-1">
+                          <span>{col.name}</span>
+                          {sortConfig?.key === col.name && (
+                              <span className="text-brand-primary">
+                                  {sortConfig.direction === 'asc' ? '↑' : '↓'}
+                              </span>
+                          )}
+                      </div>
                 </th>
               ))}
             </tr>
