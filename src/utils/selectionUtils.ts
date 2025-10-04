@@ -16,14 +16,14 @@ export function computeSelectedStateHash(selectedIds: Set<number>): string {
 }
 
 export function createSpatialGrid(
-    data: any[],
+    data: DataPoint[],
     xScale: (v: number) => number,
     yScale: (v: number) => number,
     xCol: string,
     yCol: string,
     size: number,
     gridSize = 20
-) {
+): DataPoint[][][] {
     const grid: any[][][] = Array.from({ length: gridSize }, () =>
         Array.from({ length: gridSize }, () => [])
     );
