@@ -44,7 +44,7 @@ export function createSpatialGrid(
 }
 
 export function getPointsInBrush(
-    grid: any[][][],
+    grid: DataPoint[][][],
     xScale: (v: number) => number,
     yScale: (v: number) => number,
     x0: number,
