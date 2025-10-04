@@ -68,3 +68,65 @@ These are minor improvements related to code style, consistency, and removing de
 6.  **Fix Inconsistent Test Logic:** In `src/test/columnReordering.test.ts`, the test for filtering logic is inconsistent with the application's logic. Refactor it to use the `filterColumns` utility function.
 7.  **Use Optional Chaining:** In `components/ScatterPlotMatrix.tsx`, replace the non-null assertion (`!`) on `canvasContainerRef.current` with optional chaining (`?.`) for stylistic consistency.
 8.  **Memoize Visible Column Count:** In `components/ControlPanel.tsx`, use the `useMemo` hook to calculate the visible column count for a minor performance gain.
+
+
+# RANDOM NOTES
+
+## ONE
+
+components/ScatterPlotMatrix.tsx
+
+It's great that you've extracted computeSelectedStateHash into a utility file. However, the related functions createSpatialGrid and getPointsInBrush have also been created in selectionUtils.ts, but their old implementations still exist as useCallback hooks within this component (starting on lines 115 and 139 respectively).
+
+To complete the refactoring and avoid code duplication, you should:
+
+Import all three functions here.
+Remove the local useCallback definitions for createSpatialGrid and getPointsInBrush from this component.
+Update the call sites (e.g., lines 397-398) to use the imported functions, making sure to pass the size argument as required by their new signatures.
+
+
+## TWO
+
+src/utils/selectionUtils.ts
+Comment on lines +18 to +26
+export function createSpatialGrid(
+    data: any[],
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    xCol: string,
+    yCol: string,
+    size: number,
+    gridSize = 20
+) {
+Contributor
+￼ gemini-code-assist bot 3 minutes ago
+￼
+
+To improve type safety and make the function signature more explicit, you can replace the any type with the more specific DataPoint type and add a return type annotation. You'll need to add import type { DataPoint } from '../../types'; at the top of the file.
+
+Suggested change
+export function createSpatialGrid(
+    data: any[],
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    xCol: string,
+    yCol: string,
+    size: number,
+    gridSize = 20
+) {
+export function createSpatialGrid(
+    data: DataPoint[],
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    xCol: string,
+    yCol: string,
+    size: number,
+    gridSize = 20
+): DataPoint[][][] {
+Commit suggestion
+￼Add suggestion to batch
+
+
+
+## THREE
+

@@ -6,6 +6,7 @@ import { FileUpload } from './components/FileUpload';
 import { ControlPanel } from './components/ControlPanel';
 import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
+import { DataTable } from './components/DataTable';
 import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
 import { GitHubIcon } from './components/icons';
 import { reorderColumns, filterColumns } from './src/utils/columnUtils';
@@ -113,6 +114,42 @@ const App: React.FC = () => {
     setColumns(prevColumns => filterColumns(prevColumns, filter));
   };
 
+  // Compute data to show in the table (only selected points if there's a selection)
+  const tableData = brushSelection?.selectedIds 
+    ? data.filter(row => brushSelection.selectedIds.has(row.__id))
+    : [];
+
+  // Resizable table panel
+  const [tableHeight, setTableHeight] = useState(300); // pixels
+  const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const mainElement = document.querySelector('main');
+      if (!mainElement) return;
+
+      const mainRect = mainElement.getBoundingClientRect();
+      const newHeight = mainRect.bottom - e.clientY;
+      // Clamp between 100px and 80% of main height
+      const maxHeight = mainRect.height * 0.8;
+      setTableHeight(Math.max(100, Math.min(maxHeight, newHeight)));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
   if (!columns.length) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
@@ -169,19 +206,48 @@ const App: React.FC = () => {
               onColumnFilterChange={handleColumnFilterChange}
             />
           </aside>
-          <main className="flex-1 p-4 bg-gray-100 overflow-auto">
-            <ScatterPlotMatrix
-              data={data}
-              columns={columns}
-              onColumnReorder={handleColumnReorder}
-              brushSelection={brushSelection}
-              onBrush={setBrushSelection}
-              filterMode={filterMode}
-              showHistograms={showHistograms}
-              labelColumn={labelColumn}
-              onPointHover={handlePointHover}
-              onPointLeave={handlePointLeave}
-            />
+          <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
+            <div
+              className="p-4 overflow-auto"
+              style={{
+                flex: tableData.length > 0 ? '1 1 auto' : '1 1 0',
+                minHeight: 0
+              }}
+            >
+              <ScatterPlotMatrix
+                data={data}
+                columns={columns}
+                onColumnReorder={handleColumnReorder}
+                brushSelection={brushSelection}
+                onBrush={setBrushSelection}
+                filterMode={filterMode}
+                showHistograms={showHistograms}
+                labelColumn={labelColumn}
+                onPointHover={handlePointHover}
+                onPointLeave={handlePointLeave}
+              />
+            </div>
+            {tableData.length > 0 && (
+              <>
+                <div
+                  className="h-2 bg-gray-300 hover:bg-brand-primary cursor-row-resize flex items-center justify-center transition-colors"
+                  onMouseDown={() => setIsDragging(true)}
+                  title="Drag to resize table"
+                >
+                  <div className="w-12 h-1 bg-gray-500 rounded"></div>
+                </div>
+                <div
+                  style={{ height: `${tableHeight}px`, minHeight: '100px', maxHeight: '80%' }}
+                  className="overflow-hidden"
+                >
+                  <DataTable
+                    data={tableData}
+                    columns={columns}
+                    labelColumn={labelColumn}
+                  />
+                </div>
+              </>
+            )}
           </main>
         </div>
       </div>
