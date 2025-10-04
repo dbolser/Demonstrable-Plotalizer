@@ -4,7 +4,7 @@ import { useDrag, useDrop } from 'react-dnd';
 import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
-import { computeSelectedStateHash } from '../src/utils/selectionUtils';
+import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -110,60 +110,6 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const selectedIds = useMemo(() => {
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
-
-  // Spatial grid for fast brush selection
-  const createSpatialGrid = useCallback((data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string) => {
-    const gridSize = 20; // 20x20 grid
-    const grid: DataPoint[][][] = Array(gridSize).fill(null).map(() => Array(gridSize).fill(null).map(() => []));
-
-    data.forEach(d => {
-      const x = +d[xCol];
-      const y = +d[yCol];
-      if (!isFinite(x) || !isFinite(y)) return;
-
-      const screenX = xScale(x);
-      const screenY = yScale(y);
-      // Map screen coordinates [0, size] to grid cells [0, gridSize-1]
-      const gridX = Math.floor((screenX / size) * gridSize);
-      const gridY = Math.floor((screenY / size) * gridSize);
-
-      if (gridX >= 0 && gridX < gridSize && gridY >= 0 && gridY < gridSize) {
-        grid[gridX][gridY].push(d);
-      }
-    });
-
-    return grid;
-  }, [size]);
-
-  // Fast brush selection using spatial grid
-  const getPointsInBrush = useCallback((grid: DataPoint[][][], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, x0: number, y0: number, x1: number, y1: number, xCol: string, yCol: string) => {
-    const gridSize = 20;
-    const selectedIds = new Set<number>();
-
-    // Map brush coordinates to grid cells
-    // Since brush now covers [0, size], we need to map that range to [0, gridSize-1]
-    const startGridX = Math.max(0, Math.floor((x0 / size) * gridSize));
-    const endGridX = Math.min(gridSize - 1, Math.ceil((x1 / size) * gridSize));
-    const startGridY = Math.max(0, Math.floor((y0 / size) * gridSize));
-    const endGridY = Math.min(gridSize - 1, Math.ceil((y1 / size) * gridSize));
-
-    for (let gx = startGridX; gx <= endGridX; gx++) {
-      for (let gy = startGridY; gy <= endGridY; gy++) {
-        grid[gx][gy].forEach(d => {
-          const x = +d[xCol];
-          const y = +d[yCol];
-          const screenX = xScale(x);
-          const screenY = yScale(y);
-
-          if (screenX >= x0 && screenX <= x1 && screenY >= y0 && screenY <= y1) {
-            selectedIds.add(d.__id);
-          }
-        });
-      }
-    }
-
-    return selectedIds;
-  }, [size]);
 
   // Canvas rendering function
   const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
@@ -394,8 +340,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         if (!colX || !colY) return;
 
         // Create spatial grid for fast selection
-        const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name);
-        const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name);
+        const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name, size);
+        const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name, size);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
       });
 
@@ -660,7 +606,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, createSpatialGrid, getPointsInBrush, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
 
   return (
     <div className="w-full h-full relative">
