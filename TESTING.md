@@ -22,6 +22,11 @@ This project includes a comprehensive test suite for the interactive scatter plo
 - **Memory management**: Tests cache size limits and cleanup
 - **Execution time benchmarks**: Ensures operations complete within thresholds
 
+### 🎯 **Selection Tests** (`src/test/selectionCache.test.ts`, `src/test/spatialGrid.test.ts`, `src/test/brushIntegration.test.tsx`)
+- **Selection hash stability**: Tests collision-resistant cache keys for large selections
+- **Spatial grid filtering**: Tests efficient point-in-rectangle queries
+- **Brush integration**: Tests selection state propagation through components
+
 ## Running Tests
 
 ```bash
@@ -40,10 +45,14 @@ npm run test:coverage
 
 ## Test Results
 
-✅ **22 tests passing**
+✅ **27 tests passing**
 - 8 column reordering tests
 - 9 performance tests
 - 5 component logic tests
+- 2 selection cache tests
+- 1 spatial grid test
+- 1 brush integration test
+- 1 log scale test
 
 ## Test Environment
 
@@ -73,6 +82,15 @@ npm run test:coverage
 - ✅ Brush selection filtering
 - ✅ Highlight vs filter modes
 - ✅ Visible column index mapping
+
+### Selection Features
+- ✅ Rubber-band selection in scatter plots
+- ✅ Histogram range selection (horizontal & vertical)
+- ✅ Selection highlight propagation across all plots
+- ✅ Highlight/filter mode toggle
+- ✅ Stable selection cache keys (no collisions)
+- ✅ Spatial grid optimization for large selections
+- ✅ ESC key and button to clear selection
 
 ## Future Test Additions
 

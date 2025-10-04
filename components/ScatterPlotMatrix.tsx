@@ -108,9 +108,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const plotSize = showHistograms ? size * (n + 1) : size * n;
 
   const selectedIds = useMemo(() => {
-    const ids = brushSelection?.selectedIds || new Set<number>();
-    console.log('📊 selectedIds from brushSelection:', ids.size, 'ids');
-    return ids;
+    return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
 
   // Spatial grid for fast brush selection
@@ -166,7 +164,6 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   // Canvas rendering function
   const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
-    console.log('🎨 renderPointsToCanvas called:', xCol, 'vs', yCol, '| selectedIds:', selectedIds.size, '| filterMode:', filterMode);
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -359,55 +356,38 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     let histCellsBottom: d3.Selection<SVGGElement, number, SVGGElement, unknown> | null = null;
     let histCellsRight: d3.Selection<SVGGElement, number, SVGGElement, unknown> | null = null;
 
-    const brush = d3.brush().extent([[padding / 2, padding / 2], [size - padding / 2, size - padding / 2]]);
-    const brushX = d3.brushX().extent([[padding / 2, padding / 2], [size - padding / 2, size - padding / 2]]);
-    const brushY = d3.brushY().extent([[padding / 2, padding / 2], [size - padding / 2, size - padding / 2]]);
+    const brush = d3.brush().extent([[0, 0], [size, size]]);
+    const brushX = d3.brushX().extent([[0, 0], [size, size]]);
+    const brushY = d3.brushY().extent([[0, 0], [size, size]]);
 
     brush
       .on("end", function (event) {
-        console.log('Brush end event fired', { hasSourceEvent: !!event.sourceEvent, hasSelection: !!event.selection });
         if (!event.sourceEvent) return; // Ignore programmatic brushes
 
         if (!event.selection) {
-          console.log('2️⃣ No selection, clearing');
           onBrush(null);
           return;
         }
 
         // Get the [i, j] data bound to this cell
         const cellData = d3.select(this).datum() as [number, number];
-        console.log('3️⃣ Cell data:', cellData);
-        if (!cellData || cellData.length !== 2) {
-          console.log('❌ No cell data, returning');
-          return;
-        }
+        if (!cellData || cellData.length !== 2) return;
 
         const [i_visible, j_visible] = cellData;
-        console.log('4️⃣ Cell indices:', { i_visible, j_visible });
         const i_original = visibleIndexToOriginalIndex.get(i_visible);
         const j_original = visibleIndexToOriginalIndex.get(j_visible);
-        console.log('5️⃣ Original indices:', { i_original, j_original });
 
-        if (i_original === undefined || j_original === undefined) {
-          console.log('❌ Original indices undefined, returning');
-          return;
-        }
+        if (i_original === undefined || j_original === undefined) return;
 
         const [[x0, y0], [x1, y1]] = event.selection;
-        console.log('6️⃣ Selection coords:', { x0, y0, x1, y1 });
 
         const colX = columns[i_original];
         const colY = columns[j_original];
-        console.log('7️⃣ Columns:', { colX: colX?.name, colY: colY?.name });
-        if (!colX || !colY) {
-          console.log('❌ Columns not found, returning');
-          return;
-        }
+        if (!colX || !colY) return;
 
         // Create spatial grid for fast selection
         const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name);
         const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name);
-        console.log('✅ Scatter brush end: selected', newSelectedIds.size, 'ids out of', data.length);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
       });
 
@@ -512,11 +492,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       brushX
         .on("end", function (event) {
           if (!event.sourceEvent) return;
-          const parentNode = this.parentNode as Element;
-          if (!parentNode) return;
-          const i_visible = parseInt(d3.select(parentNode).attr("data-index")!, 10);
-          const i_original = visibleIndexToOriginalIndex.get(i_visible);
 
+          const i_visible = d3.select(this).datum() as number;
+          if (i_visible === undefined) return;
+
+          const i_original = visibleIndexToOriginalIndex.get(i_visible);
           if (i_original === undefined || !columns[i_original]) return;
 
           if (!event.selection) { onBrush(null); return; }
@@ -576,11 +556,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       brushY
         .on("end", function (event) {
           if (!event.sourceEvent) return;
-          const parentNode = this.parentNode as Element;
-          if (!parentNode) return;
-          const j_visible = parseInt(d3.select(parentNode).attr("data-index")!, 10);
-          const j_original = visibleIndexToOriginalIndex.get(j_visible);
 
+          const j_visible = d3.select(this).datum() as number;
+          if (j_visible === undefined) return;
+
+          const j_original = visibleIndexToOriginalIndex.get(j_visible);
           if (j_original === undefined || !columns[j_original]) return;
 
           if (!event.selection) { onBrush(null); return; }
