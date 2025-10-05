@@ -142,13 +142,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         }
 
         let maxPositive = d3.max(positiveValues);
-        if (maxPositive === undefined || !(maxPositive > minPositive)) {
-          const fallback = safeDomainEnd > minPositive ? safeDomainEnd : minPositive * 10;
-          maxPositive = fallback;
-        }
-
-        if (!(maxPositive > minPositive)) {
-          maxPositive = minPositive * 10;
+        if (maxPositive === undefined || maxPositive <= minPositive) {
+          const fallbackFromDomain = safeDomainEnd > minPositive ? safeDomainEnd : undefined;
+          maxPositive = fallbackFromDomain ?? minPositive * 10;
         }
 
         const logDomain: [number, number] = [Math.log10(minPositive), Math.log10(maxPositive)];

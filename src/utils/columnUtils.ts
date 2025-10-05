@@ -7,20 +7,23 @@ export function reorderColumns(columns: Column[], dragIndex: number, hoverIndex:
 }
 
 export function sortColumnsByVisibility(columns: Column[]): Column[] {
-    const visible: Column[] = [];
-    const hidden: Column[] = [];
+    let encounteredHidden = false;
+    for (const column of columns) {
+        if (!column.visible) {
+            encounteredHidden = true;
+        } else if (encounteredHidden) {
+            const sorted: Column[] = [];
+            for (const candidate of columns) {
+                if (candidate.visible) {
+                    sorted.push(candidate);
+                }
+            }
+            for (const candidate of columns) {
+                if (!candidate.visible) {
+                    sorted.push(candidate);
+                }
+            }
 
-    columns.forEach(col => {
-        if (col.visible) {
-            visible.push(col);
-        } else {
-            hidden.push(col);
-        }
-    });
-
-    const sorted = [...visible, ...hidden];
-    for (let i = 0; i < columns.length; i++) {
-        if (columns[i] !== sorted[i]) {
             return sorted;
         }
     }
