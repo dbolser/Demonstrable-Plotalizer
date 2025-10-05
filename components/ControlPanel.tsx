@@ -11,6 +11,10 @@ interface ControlPanelProps {
   setFilterMode: (mode: FilterMode) => void;
   showHistograms: boolean;
   setShowHistograms: (show: boolean) => void;
+  useUniformLogBins: boolean;
+  setUseUniformLogBins: (useUniform: boolean) => void;
+  globalLogScale: boolean;
+  onToggleGlobalLogScale: (useLog: boolean) => void;
   labelColumn: string | null;
   columnFilter: string;
   onColumnFilterChange: (filter: string) => void;
@@ -24,6 +28,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setFilterMode,
   showHistograms,
   setShowHistograms,
+  useUniformLogBins,
+  setUseUniformLogBins,
+  globalLogScale,
+  onToggleGlobalLogScale,
   labelColumn,
   columnFilter,
   onColumnFilterChange,
@@ -106,6 +114,27 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               id="showHistograms"
               checked={showHistograms}
               onChange={(e) => setShowHistograms(e.target.checked)}
+              className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <label htmlFor="uniformLogBins" className="font-semibold text-gray-700 text-sm">Uniform Log Bins</label>
+            <input
+              type="checkbox"
+              id="uniformLogBins"
+              checked={useUniformLogBins}
+              onChange={(e) => setUseUniformLogBins(e.target.checked)}
+              disabled={!showHistograms}
+              className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary disabled:opacity-50"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <label htmlFor="globalLogScale" className="font-semibold text-gray-700 text-sm">Log Scale All Axes</label>
+            <input
+              type="checkbox"
+              id="globalLogScale"
+              checked={globalLogScale}
+              onChange={(e) => onToggleGlobalLogScale(e.target.checked)}
               className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
             />
           </div>

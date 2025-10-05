@@ -14,6 +14,7 @@ interface ScatterPlotMatrixProps {
   onBrush: (selection: BrushSelection) => void;
   filterMode: FilterMode;
   showHistograms: boolean;
+  useUniformLogBins: boolean;
   labelColumn: string | null;
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
@@ -87,6 +88,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onBrush,
   filterMode,
   showHistograms,
+  useUniformLogBins,
   labelColumn,
   onPointHover,
   onPointLeave
@@ -474,11 +476,27 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
       histCellsBottom.each(function (i_visible) {
         const i_original = visibleIndexToOriginalIndex.get(i_visible)!;
-        const allValues = filteredData.map(d => +d[columns[i_original].name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[columns[i_original].name]).filter(isFinite);
+        const column = columns[i_original];
+        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
+        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
 
         const domain = xScales[i_visible].domain();
-        const binGenerator = d3.bin().domain([Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])]).thresholds(20);
+        const minDomain = Math.min(domain[0], domain[1]);
+        const maxDomain = Math.max(domain[0], domain[1]);
+
+        // Create bin generator with uniform log bins if requested and using log scale
+        let binGenerator;
+        if (useUniformLogBins && column.scale === 'log') {
+          // Create uniform bins in log space
+          const logMin = Math.log10(Math.max(minDomain, 1e-10));
+          const logMax = Math.log10(maxDomain);
+          const numBins = 20;
+          const logStep = (logMax - logMin) / numBins;
+          const thresholds = Array.from({ length: numBins + 1 }, (_, i) => Math.pow(10, logMin + i * logStep));
+          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(thresholds);
+        } else {
+          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(20);
+        }
 
         const allBins = binGenerator(allValues);
         const selectedBins = binGenerator(selectedValues);
@@ -538,11 +556,27 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
       histCellsRight.each(function (j_visible) {
         const j_original = visibleIndexToOriginalIndex.get(j_visible)!;
-        const allValues = filteredData.map(d => +d[columns[j_original].name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[columns[j_original].name]).filter(isFinite);
+        const column = columns[j_original];
+        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
+        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
 
         const domain = yScales[j_visible].domain();
-        const binGenerator = d3.bin().domain([Math.min(domain[0], domain[1]), Math.max(domain[0], domain[1])]).thresholds(20);
+        const minDomain = Math.min(domain[0], domain[1]);
+        const maxDomain = Math.max(domain[0], domain[1]);
+
+        // Create bin generator with uniform log bins if requested and using log scale
+        let binGenerator;
+        if (useUniformLogBins && column.scale === 'log') {
+          // Create uniform bins in log space
+          const logMin = Math.log10(Math.max(minDomain, 1e-10));
+          const logMax = Math.log10(maxDomain);
+          const numBins = 20;
+          const logStep = (logMax - logMin) / numBins;
+          const thresholds = Array.from({ length: numBins + 1 }, (_, i) => Math.pow(10, logMin + i * logStep));
+          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(thresholds);
+        } else {
+          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(20);
+        }
 
         const allBins = binGenerator(allValues);
         const selectedBins = binGenerator(selectedValues);

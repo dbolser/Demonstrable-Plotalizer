@@ -18,6 +18,8 @@ const App: React.FC = () => {
   const [brushSelection, setBrushSelection] = useState<BrushSelection | null>(null);
   const [filterMode, setFilterMode] = useState<FilterMode>('highlight');
   const [showHistograms, setShowHistograms] = useState<boolean>(true);
+  const [useUniformLogBins, setUseUniformLogBins] = useState<boolean>(false);
+  const [globalLogScale, setGlobalLogScale] = useState<boolean>(false);
   const [columnFilter, setColumnFilter] = useState<string>('');
   const [tooltip, setTooltip] = useState<{ visible: boolean; content: string; x: number; y: number }>({
     visible: false,
@@ -114,6 +116,13 @@ const App: React.FC = () => {
     setColumns(prevColumns => filterColumns(prevColumns, filter));
   };
 
+  const handleGlobalLogScaleToggle = (useLog: boolean) => {
+    setGlobalLogScale(useLog);
+    setColumns(prevColumns =>
+      prevColumns.map(col => ({ ...col, scale: useLog ? 'log' : 'linear' as ScaleType }))
+    );
+  };
+
   // Compute data to show in the table (only selected points if there's a selection)
   const tableData = brushSelection?.selectedIds 
     ? data.filter(row => brushSelection.selectedIds.has(row.__id))
@@ -201,6 +210,10 @@ const App: React.FC = () => {
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
               setShowHistograms={setShowHistograms}
+              useUniformLogBins={useUniformLogBins}
+              setUseUniformLogBins={setUseUniformLogBins}
+              globalLogScale={globalLogScale}
+              onToggleGlobalLogScale={handleGlobalLogScaleToggle}
               labelColumn={labelColumn}
               columnFilter={columnFilter}
               onColumnFilterChange={handleColumnFilterChange}
@@ -222,6 +235,7 @@ const App: React.FC = () => {
                 onBrush={setBrushSelection}
                 filterMode={filterMode}
                 showHistograms={showHistograms}
+                useUniformLogBins={useUniformLogBins}
                 labelColumn={labelColumn}
                 onPointHover={handlePointHover}
                 onPointLeave={handlePointLeave}
