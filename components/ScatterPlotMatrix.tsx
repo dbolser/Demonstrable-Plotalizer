@@ -623,7 +623,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           selectedLength: selectedBins[index]?.length || 0
         }));
 
-        const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins as any[], (d: any) => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
+        const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins, (d) => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
 
         const g = d3.select(this);
         g.selectAll("rect.total").data(combinedBins).join("rect").attr("class", "total")
