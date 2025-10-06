@@ -30,6 +30,13 @@ interface CoordinateDisplay {
   yColumn: string | null;
 }
 
+interface HistogramBin {
+  x0: number;
+  x1: number;
+  totalLength: number;
+  selectedLength: number;
+}
+
 const DraggableHeader: React.FC<{
   name: string,
   index: number,
@@ -298,6 +305,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         x: event.sourceEvent.clientX - svgRect.left,
         y: event.sourceEvent.clientY - svgRect.top,
       };
+    };
+
+    // Typed wrapper functions for D3 brush operations
+    const callBrushMove = (selection: d3.Selection<SVGGElement | d3.BaseType, unknown, null, undefined>, brush: d3.BrushBehavior<unknown>, selectionData: [[number, number], [number, number]] | null) => {
+      selection.call(brush.move as any, selectionData);
+    };
+
+    const callBrushXMove = (selection: d3.Selection<SVGGElement | d3.BaseType, unknown, null, undefined>, brush: d3.BrushBehavior<unknown>, selectionData: [number, number] | null) => {
+      selection.call(brush.move as any, selectionData);
+    };
+
+    const callBrushYMove = (selection: d3.Selection<SVGGElement | d3.BaseType, unknown, null, undefined>, brush: d3.BrushBehavior<unknown>, selectionData: [number, number] | null) => {
+      selection.call(brush.move as any, selectionData);
     };
 
     // During drag, we'll update layout but skip expensive canvas re-rendering
@@ -626,27 +646,28 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const allBins = binGenerator(allValues);
         const selectedBins = binGenerator(selectedValues);
 
-        const combinedBins = allBins.map((bin, index) => ({
-          x0: bin.x0!, x1: bin.x1!,
+        const combinedBins: HistogramBin[] = allBins.map((bin, index) => ({
+          x0: bin.x0!,
+          x1: bin.x1!,
           totalLength: bin.length,
           selectedLength: selectedBins[index]?.length || 0
         }));
 
-        const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins as any[], (d: any) => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
+        const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins, d => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
 
         const g = d3.select(this);
         g.selectAll("rect.total").data(combinedBins).join("rect").attr("class", "total")
-          .attr("x", (d: any) => xScales[i_visible](d.x0!)! + 1)
-          .attr("width", (d: any) => Math.max(0, xScales[i_visible](d.x1!)! - xScales[i_visible](d.x0!)! - 1))
-          .attr("y", (d: any) => yHist(d.totalLength)!)
-          .attr("height", (d: any) => size - padding / 2 - yHist(d.totalLength)!)
+          .attr("x", d => xScales[i_visible](d.x0)! + 1)
+          .attr("width", d => Math.max(0, xScales[i_visible](d.x1)! - xScales[i_visible](d.x0)! - 1))
+          .attr("y", d => yHist(d.totalLength)!)
+          .attr("height", d => size - padding / 2 - yHist(d.totalLength)!)
           .attr("fill", selectedIds.size > 0 ? "#ccc" : "#60a5fa");
 
         g.selectAll("rect.selected").data(combinedBins).join("rect").attr("class", "selected")
-          .attr("x", (d: any) => xScales[i_visible](d.x0!)! + 1)
-          .attr("width", (d: any) => Math.max(0, xScales[i_visible](d.x1!)! - xScales[i_visible](d.x0!)! - 1))
-          .attr("y", (d: any) => yHist(d.selectedLength)!)
-          .attr("height", (d: any) => size - padding / 2 - yHist(d.selectedLength)!)
+          .attr("x", d => xScales[i_visible](d.x0)! + 1)
+          .attr("width", d => Math.max(0, xScales[i_visible](d.x1)! - xScales[i_visible](d.x0)! - 1))
+          .attr("y", d => yHist(d.selectedLength)!)
+          .attr("height", d => size - padding / 2 - yHist(d.selectedLength)!)
           .attr("fill", "#1e40af");
       });
 
@@ -748,27 +769,28 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const allBins = binGenerator(allValues);
         const selectedBins = binGenerator(selectedValues);
 
-        const combinedBins = allBins.map((bin, index) => ({
-          x0: bin.x0!, x1: bin.x1!,
+        const combinedBins: HistogramBin[] = allBins.map((bin, index) => ({
+          x0: bin.x0!,
+          x1: bin.x1!,
           totalLength: bin.length,
           selectedLength: selectedBins[index]?.length || 0
         }));
 
-        const xHist = d3.scaleLinear().domain([0, d3.max(combinedBins as any[], (d: any) => d.totalLength) || 1]).range([padding / 2, size - padding / 2]);
+        const xHist = d3.scaleLinear().domain([0, d3.max(combinedBins, d => d.totalLength) || 1]).range([padding / 2, size - padding / 2]);
         const g = d3.select(this);
 
         g.selectAll("rect.total").data(combinedBins).join("rect").attr("class", "total")
-          .attr("y", (d: any) => yScales[j_visible](d.x1!)! + 1)
-          .attr("height", (d: any) => Math.max(0, yScales[j_visible](d.x0!)! - yScales[j_visible](d.x1!)! - 1))
+          .attr("y", d => yScales[j_visible](d.x1)! + 1)
+          .attr("height", d => Math.max(0, yScales[j_visible](d.x0)! - yScales[j_visible](d.x1)! - 1))
           .attr("x", padding / 2)
-          .attr("width", (d: any) => xHist(d.totalLength)! - padding / 2)
+          .attr("width", d => xHist(d.totalLength)! - padding / 2)
           .attr("fill", selectedIds.size > 0 ? "#ccc" : "#60a5fa");
 
         g.selectAll("rect.selected").data(combinedBins).join("rect").attr("class", "selected")
-          .attr("y", (d: any) => yScales[j_visible](d.x1!)! + 1)
-          .attr("height", (d: any) => Math.max(0, yScales[j_visible](d.x0!)! - yScales[j_visible](d.x1!)! - 1))
+          .attr("y", d => yScales[j_visible](d.x1)! + 1)
+          .attr("height", d => Math.max(0, yScales[j_visible](d.x0)! - yScales[j_visible](d.x1)! - 1))
           .attr("x", padding / 2)
-          .attr("width", (d: any) => xHist(d.selectedLength)! - padding / 2)
+          .attr("width", d => xHist(d.selectedLength)! - padding / 2)
           .attr("fill", "#1e40af");
       });
     }
@@ -779,9 +801,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const j_original = visibleIndexToOriginalIndex.get(j_visible);
 
       if (brushSelection && brushSelection.indexX === i_original && brushSelection.indexY === j_original) {
-        d3.select(this).call(brush.move as any, [[brushSelection.x0, brushSelection.y0], [brushSelection.x1, brushSelection.y1]]);
+        callBrushMove(d3.select(this), brush, [[brushSelection.x0, brushSelection.y0], [brushSelection.x1, brushSelection.y1]]);
       } else {
-        d3.select(this).call(brush.move as any, null);
+        callBrushMove(d3.select(this), brush, null);
       }
     });
 
@@ -789,9 +811,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       histCellsBottom.each(function (i_visible) {
         const i_original = visibleIndexToOriginalIndex.get(i_visible);
         if (brushSelection && brushSelection.indexX === i_original && brushSelection.indexY === columns.length) {
-          d3.select(this).call(brushX.move as any, [brushSelection.x0, brushSelection.x1]);
+          callBrushXMove(d3.select(this), brushX, [brushSelection.x0, brushSelection.x1]);
         } else {
-          d3.select(this).call(brushX.move as any, null);
+          callBrushXMove(d3.select(this), brushX, null);
         }
       });
     }
@@ -800,9 +822,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       histCellsRight.each(function (j_visible) {
         const j_original = visibleIndexToOriginalIndex.get(j_visible);
         if (brushSelection && brushSelection.indexX === columns.length && brushSelection.indexY === j_original) {
-          d3.select(this).call(brushY.move as any, [brushSelection.y0, brushSelection.y1]);
+          callBrushYMove(d3.select(this), brushY, [brushSelection.y0, brushSelection.y1]);
         } else {
-          d3.select(this).call(brushY.move as any, null);
+          callBrushYMove(d3.select(this), brushY, null);
         }
       });
     }
