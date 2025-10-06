@@ -8,6 +8,8 @@ import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '.
 
 type NumericScale = d3.ScaleContinuousNumeric<number, number>;
 
+const MAX_CACHE_ENTRIES_PER_CANVAS = 6;
+
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
   columns: Column[];
@@ -101,6 +103,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const canvasRenderKeyRef = useRef<Map<string, string>>(new Map());
+  const renderCacheRef = useRef<Map<string, Map<string, ImageData>>>(new Map());
+  const lastDataStateRef = useRef<string | null>(null);
   const isDraggingRef = useRef(false);
   const [coordinateDisplay, setCoordinateDisplay] = useState<CoordinateDisplay>({
     visible: false,
@@ -131,6 +135,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const selectedIds = useMemo(() => {
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
+
+  const allowCanvasCache = selectedIds.size === 0;
 
   const cancelPendingRenders = useCallback(() => {
     if (pendingRenderCancelRef.current) {
@@ -226,6 +232,26 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const task = tasks[completed];
         renderPointsToCanvas(task.canvas, dataToRender, task.xScale, task.yScale, task.xCol, task.yCol, selected, mode);
         canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
+        if (selected.size === 0) {
+          const ctx = task.canvas.getContext('2d');
+          if (ctx) {
+            try {
+              const imageData = ctx.getImageData(0, 0, size, size);
+              let cacheForCanvas = renderCacheRef.current.get(task.canvasKey);
+              if (!cacheForCanvas) {
+                cacheForCanvas = new Map();
+                renderCacheRef.current.set(task.canvasKey, cacheForCanvas);
+              }
+              cacheForCanvas.set(task.renderKey, imageData);
+              while (cacheForCanvas.size > MAX_CACHE_ENTRIES_PER_CANVAS) {
+                const oldestKey = cacheForCanvas.keys().next().value;
+                cacheForCanvas.delete(oldestKey);
+              }
+            } catch (error) {
+              // Ignore caching errors (e.g., if the canvas is tainted)
+            }
+          }
+        }
         completed += 1;
         processedThisFrame += 1;
       }
@@ -254,7 +280,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     pendingRenderCancelRef.current = cancel;
     return cancel;
-  }, [cancelPendingRenders, onRenderLifecycle, renderPointsToCanvas]);
+  }, [cancelPendingRenders, onRenderLifecycle, renderPointsToCanvas, size]);
 
   const { filteredData, selectedData } = useMemo(
     () => filterData(data, selectedIds, filterMode),
@@ -269,6 +295,14 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, [data]);
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
+
+  useEffect(() => {
+    if (lastDataStateRef.current && lastDataStateRef.current !== dataStateHash) {
+      renderCacheRef.current.clear();
+      canvasRenderKeyRef.current.clear();
+    }
+    lastDataStateRef.current = dataStateHash;
+  }, [dataStateHash]);
 
   // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
   const dataForStats = useMemo(() => {
@@ -562,7 +596,27 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}`;
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
-      if (!isDraggingRef.current && previousKey !== renderKey) {
+      if (!isDraggingRef.current) {
+        if (previousKey === renderKey) {
+          return;
+        }
+
+        const cacheForCanvas = allowCanvasCache ? renderCacheRef.current.get(canvasKey) : undefined;
+        const cachedImage = cacheForCanvas?.get(renderKey);
+
+        if (cachedImage) {
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.putImageData(cachedImage, 0, 0);
+          }
+          canvasRenderKeyRef.current.set(canvasKey, renderKey);
+          if (cacheForCanvas) {
+            cacheForCanvas.delete(renderKey);
+            cacheForCanvas.set(renderKey, cachedImage);
+          }
+          return;
+        }
+
         renderTasks.push({
           canvas,
           canvasKey,
