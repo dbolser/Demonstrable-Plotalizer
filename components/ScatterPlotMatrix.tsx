@@ -120,6 +120,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const size = 150;
   const padding = 20;
 
+  // Tooltip positioning constants
+  const TOOLTIP_WIDTH = 200;
+  const TOOLTIP_HEIGHT = 40;
+  const TOOLTIP_OFFSET = 10;
+
   const { visibleColumns, visibleIndexToOriginalIndex } = useMemo(
     () => mapVisibleColumns(columns),
     [columns]
@@ -285,6 +290,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   useEffect(() => {
     if (!ref.current || data.length === 0) return;
 
+    // Helper function to get mouse position relative to SVG
+    const getMousePosition = (event: d3.D3BrushEvent<unknown>) => {
+      if (!event.sourceEvent || !ref.current) return null;
+      const svgRect = ref.current.getBoundingClientRect();
+      return {
+        x: event.sourceEvent.clientX - svgRect.left,
+        y: event.sourceEvent.clientY - svgRect.top,
+      };
+    };
+
     // During drag, we'll update layout but skip expensive canvas re-rendering
 
     const svg = d3.select(ref.current);
@@ -331,9 +346,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     let histCellsBottom: d3.Selection<SVGGElement, number, SVGGElement, unknown> | null = null;
     let histCellsRight: d3.Selection<SVGGElement, number, SVGGElement, unknown> | null = null;
 
-    const brush = d3.brush().extent([[0, 0], [size, size]]);
-    const brushX = d3.brushX().extent([[0, 0], [size, size]]);
-    const brushY = d3.brushY().extent([[0, 0], [size, size]]);
+    const brush = d3.brush<unknown>().extent([[0, 0], [size, size]]);
+    const brushX = d3.brushX<number>().extent([[0, 0], [size, size]]);
+    const brushY = d3.brushY<number>().extent([[0, 0], [size, size]]);
 
     brush
       .on("start", function (event) {
@@ -358,19 +373,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         if (!colX || !colY) return;
 
         // Get current mouse position relative to the SVG
-        const svgRect = ref.current?.getBoundingClientRect();
-        if (!svgRect) return;
-
-        const mouseX = event.sourceEvent.clientX - svgRect.left;
-        const mouseY = event.sourceEvent.clientY - svgRect.top;
+        const mousePos = getMousePosition(event);
+        if (!mousePos) return;
 
         // Calculate cell position
         const cellX = i_visible * size;
         const cellY = j_visible * size;
 
         // Convert mouse position to cell-relative coordinates
-        const cellRelativeX = mouseX - cellX;
-        const cellRelativeY = mouseY - cellY;
+        const cellRelativeX = mousePos.x - cellX;
+        const cellRelativeY = mousePos.y - cellY;
 
         // Convert to data values
         const xValue = xScales[i_visible].invert(cellRelativeX);
@@ -378,8 +390,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
         setCoordinateDisplay({
           visible: true,
-          x: mouseX,
-          y: mouseY,
+          x: mousePos.x,
+          y: mousePos.y,
           xValue: xValue,
           yValue: yValue,
           xColumn: colX.name,
@@ -533,26 +545,23 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const column = columns[i_original];
 
           // Get current mouse position relative to the SVG
-          const svgRect = ref.current?.getBoundingClientRect();
-          if (!svgRect) return;
-
-          const mouseX = event.sourceEvent.clientX - svgRect.left;
-          const mouseY = event.sourceEvent.clientY - svgRect.top;
+          const mousePos = getMousePosition(event);
+          if (!mousePos) return;
 
           // Calculate histogram cell position
           const cellX = i_visible * size;
           const cellY = n * size; // Histograms are at the bottom
 
           // Convert mouse position to cell-relative coordinates
-          const cellRelativeX = mouseX - cellX;
+          const cellRelativeX = mousePos.x - cellX;
 
           // Convert to data value
           const xValue = xScales[i_visible].invert(cellRelativeX);
 
           setCoordinateDisplay({
             visible: true,
-            x: mouseX,
-            y: mouseY,
+            x: mousePos.x,
+            y: mousePos.y,
             xValue: xValue,
             yValue: null,
             xColumn: column.name,
@@ -588,7 +597,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         .attr("transform", i => `translate(${i * size}, ${n * size})`)
         .attr("data-index", i => i) as d3.Selection<SVGGElement, number, SVGGElement, unknown>;
 
-      histCellsBottom.call(brushX as any);
+      histCellsBottom.call(brushX);
 
       histCellsBottom.each(function (i_visible) {
         const i_original = visibleIndexToOriginalIndex.get(i_visible)!;
@@ -623,7 +632,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           selectedLength: selectedBins[index]?.length || 0
         }));
 
-        const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins, (d) => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
+        const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins as any[], (d: any) => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
 
         const g = d3.select(this);
         g.selectAll("rect.total").data(combinedBins).join("rect").attr("class", "total")
@@ -658,26 +667,23 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const column = columns[j_original];
 
           // Get current mouse position relative to the SVG
-          const svgRect = ref.current?.getBoundingClientRect();
-          if (!svgRect) return;
-
-          const mouseX = event.sourceEvent.clientX - svgRect.left;
-          const mouseY = event.sourceEvent.clientY - svgRect.top;
+          const mousePos = getMousePosition(event);
+          if (!mousePos) return;
 
           // Calculate histogram cell position
           const cellX = n * size; // Histograms are on the right
           const cellY = j_visible * size;
 
           // Convert mouse position to cell-relative coordinates
-          const cellRelativeY = mouseY - cellY;
+          const cellRelativeY = mousePos.y - cellY;
 
           // Convert to data value
           const yValue = yScales[j_visible].invert(cellRelativeY);
 
           setCoordinateDisplay({
             visible: true,
-            x: mouseX,
-            y: mouseY,
+            x: mousePos.x,
+            y: mousePos.y,
             xValue: null,
             yValue: yValue,
             xColumn: null,
@@ -713,7 +719,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         .attr("transform", i => `translate(${n * size}, ${i * size})`)
         .attr("data-index", i => i) as d3.Selection<SVGGElement, number, SVGGElement, unknown>;
 
-      histCellsRight.call(brushY as any);
+      histCellsRight.call(brushY);
 
       histCellsRight.each(function (j_visible) {
         const j_original = visibleIndexToOriginalIndex.get(j_visible)!;
@@ -861,8 +867,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         <div
           style={{
             position: 'absolute',
-            left: Math.min(coordinateDisplay.x + 10, plotSize - 200),
-            top: Math.max(coordinateDisplay.y - 40, 10),
+            left: Math.min(coordinateDisplay.x + TOOLTIP_OFFSET, plotSize - TOOLTIP_WIDTH),
+            top: Math.max(coordinateDisplay.y - TOOLTIP_HEIGHT, TOOLTIP_OFFSET),
             backgroundColor: 'rgba(0, 0, 0, 0.8)',
             color: 'white',
             padding: '8px 12px',
