@@ -152,7 +152,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         <h2 className="text-lg font-bold text-brand-dark mb-2 border-b pb-2">Columns</h2>
         <div className="space-y-4">
           {columns.map((col, i) => (
-            <div key={col.name + i} className="p-3 bg-gray-50 rounded-lg border">
+            <div
+              key={col.name + i}
+              className={`p-3 rounded-lg border transition-colors ${col.visible ? 'bg-gray-200 border-gray-400' : 'bg-white border-gray-200 opacity-60'
+                }`}
+            >
               <input
                 type="text"
                 value={col.name}
