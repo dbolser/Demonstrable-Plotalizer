@@ -6,6 +6,8 @@ import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 
+type NumericScale = d3.ScaleContinuousNumeric<number, number>;
+
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
   columns: Column[];
@@ -18,23 +20,7 @@ interface ScatterPlotMatrixProps {
   labelColumn: string | null;
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
-}
-
-interface CoordinateDisplay {
-  visible: boolean;
-  x: number;
-  y: number;
-  xValue: number | null;
-  yValue: number | null;
-  xColumn: string | null;
-  yColumn: string | null;
-}
-
-interface HistogramBin {
-  x0: number;
-  x1: number;
-  totalLength: number;
-  selectedLength: number;
+  onRenderLifecycle?: (event: { phase: 'rendering' | 'idle'; total: number; completed: number }) => void;
 }
 
 const DraggableHeader: React.FC<{
@@ -108,7 +94,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   useUniformLogBins,
   labelColumn,
   onPointHover,
-  onPointLeave
+  onPointLeave,
+  onRenderLifecycle
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -124,6 +111,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     xColumn: null,
     yColumn: null
   });
+  const pendingRenderCancelRef = useRef<(() => void) | null>(null);
   const size = 150;
   const padding = 20;
 
@@ -144,8 +132,15 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
 
+  const cancelPendingRenders = useCallback(() => {
+    if (pendingRenderCancelRef.current) {
+      pendingRenderCancelRef.current();
+      pendingRenderCancelRef.current = null;
+    }
+  }, []);
+
   // Canvas rendering function
-  const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
+  const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: NumericScale, yScale: NumericScale, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -195,6 +190,71 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     ctx.globalAlpha = 1;
   }, [size]);
+
+  type RenderTask = {
+    canvas: HTMLCanvasElement;
+    canvasKey: string;
+    renderKey: string;
+    xScale: NumericScale;
+    yScale: NumericScale;
+    xCol: string;
+    yCol: string;
+  };
+
+  const scheduleCanvasRendering = useCallback((tasks: RenderTask[], totalPairs: number, dataToRender: DataPoint[], selected: Set<number>, mode: FilterMode) => {
+    cancelPendingRenders();
+
+    if (tasks.length === 0) {
+      onRenderLifecycle?.({ phase: 'idle', total: totalPairs, completed: totalPairs });
+      return () => { /* no-op */ };
+    }
+
+    let cancelled = false;
+    let frameId: number | null = null;
+    let completed = 0;
+    const totalCount = totalPairs > 0 ? totalPairs : tasks.length;
+
+    onRenderLifecycle?.({ phase: 'rendering', total: totalCount, completed: 0 });
+
+    const processFrame = () => {
+      if (cancelled) return;
+
+      const frameStart = performance.now();
+      let processedThisFrame = 0;
+
+      while (completed < tasks.length && (processedThisFrame < 4 || performance.now() - frameStart < 12)) {
+        const task = tasks[completed];
+        renderPointsToCanvas(task.canvas, dataToRender, task.xScale, task.yScale, task.xCol, task.yCol, selected, mode);
+        canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
+        completed += 1;
+        processedThisFrame += 1;
+      }
+
+      onRenderLifecycle?.({ phase: 'rendering', total: totalCount, completed: Math.min(completed, totalCount) });
+
+      if (completed < tasks.length) {
+        frameId = requestAnimationFrame(processFrame);
+      } else {
+        pendingRenderCancelRef.current = null;
+        onRenderLifecycle?.({ phase: 'idle', total: totalCount, completed: totalCount });
+      }
+    };
+
+    frameId = requestAnimationFrame(processFrame);
+
+    const cancel = () => {
+      if (cancelled) return;
+      cancelled = true;
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      pendingRenderCancelRef.current = null;
+      onRenderLifecycle?.({ phase: 'idle', total: totalCount, completed: Math.min(completed, totalCount) });
+    };
+
+    pendingRenderCancelRef.current = cancel;
+    return cancel;
+  }, [cancelPendingRenders, onRenderLifecycle, renderPointsToCanvas]);
 
   const { filteredData, selectedData } = useMemo(
     () => filterData(data, selectedIds, filterMode),
@@ -285,10 +345,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const cellCoordinates = useMemo(() => d3.cross(d3.range(n), d3.range(n)), [n]);
   const headerIndices = useMemo(() => d3.range(n), [n]);
 
+  useEffect(() => {
+    if (data.length === 0) {
+      cancelPendingRenders();
+      onRenderLifecycle?.({ phase: 'idle', total: 0, completed: 0 });
+    }
+  }, [data.length, cancelPendingRenders, onRenderLifecycle]);
+
   // Drag optimization callbacks
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;
-  }, []);
+    cancelPendingRenders();
+    onRenderLifecycle?.({ phase: 'idle', total: 0, completed: 0 });
+  }, [cancelPendingRenders, onRenderLifecycle]);
 
   const handleDragEnd = useCallback(() => {
     isDraggingRef.current = false;
@@ -296,6 +365,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   useEffect(() => {
     if (!ref.current || data.length === 0) return;
+
+    cancelPendingRenders();
 
     // Helper function to get mouse position relative to SVG
     const getMousePosition = (event: d3.D3BrushEvent<unknown>) => {
@@ -457,6 +528,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     const activeCanvases = new Set<string>();
     const container = canvasContainerRef.current;
+    const renderTasks: RenderTask[] = [];
 
     brushableCells.each(function ([i, j]) {
       const i_original = visibleIndexToOriginalIndex.get(i);
@@ -491,17 +563,15 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
-        renderPointsToCanvas(
+        renderTasks.push({
           canvas,
-          filteredData,
-          xScales[i],
-          yScales[j],
-          colX.name,
-          colY.name,
-          selectedIds,
-          filterMode
-        );
-        canvasRenderKeyRef.current.set(canvasKey, renderKey);
+          canvasKey,
+          renderKey,
+          xScale: xScales[i],
+          yScale: yScales[j],
+          xCol: colX.name,
+          yCol: colY.name,
+        });
       }
     });
 
@@ -518,6 +588,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       canvasElementsRef.current.delete(key);
       canvasRenderKeyRef.current.delete(key);
     });
+
+    let cancelRender: () => void = () => { };
+    if (!isDraggingRef.current) {
+      cancelRender = scheduleCanvasRendering(renderTasks, renderTasks.length, filteredData, selectedIds, filterMode);
+    } else {
+      onRenderLifecycle?.({ phase: 'idle', total: 0, completed: 0 });
+    }
 
     const diagonalCells = cell.filter(([i, j]) => i === j);
 
@@ -549,49 +626,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     if (showHistograms) {
       brushX
-        .on("start", function (event) {
-          if (!event.sourceEvent) return;
-          setCoordinateDisplay(prev => ({ ...prev, visible: true }));
-        })
-        .on("brush", function (event) {
-          if (!event.sourceEvent) return;
-
-          const i_visible = d3.select(this).datum() as number;
-          if (i_visible === undefined) return;
-
-          const i_original = visibleIndexToOriginalIndex.get(i_visible);
-          if (i_original === undefined || !columns[i_original]) return;
-
-          const column = columns[i_original];
-
-          // Get current mouse position relative to the SVG
-          const mousePos = getMousePosition(event);
-          if (!mousePos) return;
-
-          // Calculate histogram cell position
-          const cellX = i_visible * size;
-          const cellY = n * size; // Histograms are at the bottom
-
-          // Convert mouse position to cell-relative coordinates
-          const cellRelativeX = mousePos.x - cellX;
-
-          // Convert to data value
-          const xValue = xScales[i_visible].invert(cellRelativeX);
-
-          setCoordinateDisplay({
-            visible: true,
-            x: mousePos.x,
-            y: mousePos.y,
-            xValue: xValue,
-            yValue: null,
-            xColumn: column.name,
-            yColumn: null
-          });
-        })
         .on("end", function (event) {
           if (!event.sourceEvent) return;
-
-          setCoordinateDisplay(prev => ({ ...prev, visible: false }));
 
           const i_visible = d3.select(this).datum() as number;
           if (i_visible === undefined) return;
@@ -672,49 +708,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
 
       brushY
-        .on("start", function (event) {
-          if (!event.sourceEvent) return;
-          setCoordinateDisplay(prev => ({ ...prev, visible: true }));
-        })
-        .on("brush", function (event) {
-          if (!event.sourceEvent) return;
-
-          const j_visible = d3.select(this).datum() as number;
-          if (j_visible === undefined) return;
-
-          const j_original = visibleIndexToOriginalIndex.get(j_visible);
-          if (j_original === undefined || !columns[j_original]) return;
-
-          const column = columns[j_original];
-
-          // Get current mouse position relative to the SVG
-          const mousePos = getMousePosition(event);
-          if (!mousePos) return;
-
-          // Calculate histogram cell position
-          const cellX = n * size; // Histograms are on the right
-          const cellY = j_visible * size;
-
-          // Convert mouse position to cell-relative coordinates
-          const cellRelativeY = mousePos.y - cellY;
-
-          // Convert to data value
-          const yValue = yScales[j_visible].invert(cellRelativeY);
-
-          setCoordinateDisplay({
-            visible: true,
-            x: mousePos.x,
-            y: mousePos.y,
-            xValue: null,
-            yValue: yValue,
-            xColumn: null,
-            yColumn: column.name
-          });
-        })
         .on("end", function (event) {
           if (!event.sourceEvent) return;
-
-          setCoordinateDisplay(prev => ({ ...prev, visible: false }));
 
           const j_visible = d3.select(this).datum() as number;
           if (j_visible === undefined) return;
@@ -829,7 +824,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
+    return () => {
+      cancelRender();
+    };
+
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, scheduleCanvasRendering, cancelPendingRenders, onRenderLifecycle]);
 
   return (
     <div className="w-full h-full relative">
