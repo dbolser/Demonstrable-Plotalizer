@@ -5,6 +5,7 @@ import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
+import { computeColumnCaches, computeStatsForSubset, type ColumnCacheEntry } from '../src/utils/statisticsUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -18,7 +19,12 @@ interface ScatterPlotMatrixProps {
   labelColumn: string | null;
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
+  onRenderStart?: (totalPlots: number) => void;
+  onRenderProgress?: (completed: number, totalPlots: number) => void;
+  onRenderComplete?: () => void;
 }
+
+const MAX_CACHE_ENTRIES_PER_PAIR = 8;
 
 const DraggableHeader: React.FC<{
   name: string,
@@ -91,12 +97,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   useUniformLogBins,
   labelColumn,
   onPointHover,
-  onPointLeave
+  onPointLeave,
+  onRenderStart,
+  onRenderProgress,
+  onRenderComplete
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const canvasRenderKeyRef = useRef<Map<string, string>>(new Map());
+  const canvasCacheRef = useRef<Map<string, Map<string, HTMLCanvasElement>>>(new Map());
+  const previousDataRef = useRef<DataPoint[] | null>(null);
+  const previousDataHashRef = useRef<string | null>(null);
   const isDraggingRef = useRef(false);
   const size = 150;
   const padding = 20;
@@ -105,6 +117,20 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     () => mapVisibleColumns(columns),
     [columns]
   );
+
+  const columnNamesKey = useMemo(() => {
+    if (columns.length === 0) return '';
+    const uniqueNames = Array.from(new Set(columns.map(col => col.name))).sort();
+    return uniqueNames.join('|');
+  }, [columns]);
+
+  const columnCaches = useMemo<Map<string, ColumnCacheEntry>>(() => {
+    if (!columnNamesKey) {
+      return new Map();
+    }
+    const names = columnNamesKey.split('|');
+    return computeColumnCaches(data, names);
+  }, [data, columnNamesKey]);
 
   const n = visibleColumns.length;
   const plotSize = showHistograms ? size * (n + 1) : size * n;
@@ -186,40 +212,35 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   const columnStats = useMemo(() => {
     const stats = new Map<string, { min: number; max: number; minPositive: number }>();
-    visibleColumns.forEach(col => {
-      stats.set(col.name, { min: Infinity, max: -Infinity, minPositive: Infinity });
-    });
-
     if (visibleColumns.length === 0) {
       return stats;
     }
 
-    for (const row of dataForStats) {
-      for (const col of visibleColumns) {
-        const value = +row[col.name];
-        if (!isFinite(value)) continue;
-        const columnStat = stats.get(col.name);
-        if (!columnStat) continue;
-        if (value < columnStat.min) columnStat.min = value;
-        if (value > columnStat.max) columnStat.max = value;
-        if (value > 0 && value < columnStat.minPositive) columnStat.minPositive = value;
-      }
+    if (filterMode === 'filter' && selectedIds.size > 0) {
+      const subsetNames = visibleColumns.map(col => col.name);
+      const subsetStats = computeStatsForSubset(dataForStats, subsetNames);
+      subsetNames.forEach(name => {
+        const stat = subsetStats.get(name);
+        if (stat) {
+          stats.set(name, stat);
+        }
+      });
+      return stats;
     }
 
     visibleColumns.forEach(col => {
-      const stat = stats.get(col.name);
-      if (!stat) return;
-      if (!isFinite(stat.min)) stat.min = 0;
-      if (!isFinite(stat.max)) stat.max = 1;
-      if (!isFinite(stat.minPositive)) stat.minPositive = Math.max(1e-9, stat.max);
-      if (stat.min === stat.max) {
-        stat.min = stat.min - 1;
-        stat.max = stat.max + 1;
+      const cache = columnCaches.get(col.name);
+      if (cache) {
+        stats.set(col.name, {
+          min: cache.min,
+          max: cache.max,
+          minPositive: cache.minPositive,
+        });
       }
     });
 
     return stats;
-  }, [dataForStats, visibleColumns]);
+  }, [visibleColumns, filterMode, selectedIds, dataForStats, columnCaches]);
 
   const createScale = useCallback(
     (column: Column, range: [number, number]) => {
@@ -264,7 +285,30 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!ref.current || data.length === 0) return;
+    if (!ref.current) return;
+
+    if (data.length === 0) {
+      canvasCacheRef.current.clear();
+      canvasRenderKeyRef.current.clear();
+      canvasElementsRef.current.clear();
+      previousDataRef.current = data;
+      previousDataHashRef.current = dataStateHash;
+      d3.select(ref.current).selectAll('*').remove();
+      if (canvasContainerRef.current) {
+        canvasContainerRef.current.innerHTML = '';
+      }
+      return;
+    }
+
+    if (previousDataRef.current !== data) {
+      canvasCacheRef.current.clear();
+      canvasRenderKeyRef.current.clear();
+      previousDataRef.current = data;
+      previousDataHashRef.current = dataStateHash;
+    } else if (previousDataHashRef.current !== dataStateHash) {
+      canvasCacheRef.current.clear();
+      previousDataHashRef.current = dataStateHash;
+    }
 
     // During drag, we'll update layout but skip expensive canvas re-rendering
 
@@ -354,6 +398,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     const activeCanvases = new Set<string>();
     const container = canvasContainerRef.current;
+    const collectFiniteValues = (rows: DataPoint[], columnName: string) => {
+      const values: number[] = [];
+      for (const row of rows) {
+        const value = Number(row[columnName]);
+        if (Number.isFinite(value)) {
+          values.push(value);
+        }
+      }
+      return values;
+    };
+    const shouldUseFilteredDataset = filterMode === 'filter' && selectedIds.size > 0;
+
+    const renderTasks: Array<() => void> = [];
 
     brushableCells.each(function ([i, j]) {
       const i_original = visibleIndexToOriginalIndex.get(i);
@@ -384,23 +441,74 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       canvas.style.left = `${i * size}px`;
       canvas.style.top = `${j * size}px`;
 
-      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}`;
+      const filterModeKey = selectedIds.size > 0 ? filterMode : 'no-selection';
+      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterModeKey}-${dataStateHash}-${selectedStateHash}`;
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
-        renderPointsToCanvas(
-          canvas,
-          filteredData,
-          xScales[i],
-          yScales[j],
-          colX.name,
-          colY.name,
-          selectedIds,
-          filterMode
-        );
-        canvasRenderKeyRef.current.set(canvasKey, renderKey);
+        const cachedVariants = canvasCacheRef.current.get(canvasKey);
+        const cachedCanvas = cachedVariants?.get(renderKey);
+
+        if (cachedCanvas) {
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, size, size);
+            ctx.drawImage(cachedCanvas, 0, 0);
+          }
+          canvasRenderKeyRef.current.set(canvasKey, renderKey);
+        } else {
+          const shouldCache = selectedIds.size === 0;
+          renderTasks.push(() => {
+            renderPointsToCanvas(
+              canvas,
+              filteredData,
+              xScales[i],
+              yScales[j],
+              colX.name,
+              colY.name,
+              selectedIds,
+              filterMode
+            );
+            if (shouldCache) {
+              let pairCache = canvasCacheRef.current.get(canvasKey);
+              if (!pairCache) {
+                pairCache = new Map();
+                canvasCacheRef.current.set(canvasKey, pairCache);
+              }
+              if (!pairCache.has(renderKey)) {
+                const snapshot = document.createElement('canvas');
+                snapshot.width = size;
+                snapshot.height = size;
+                const snapshotCtx = snapshot.getContext('2d');
+                if (snapshotCtx) {
+                  snapshotCtx.drawImage(canvas, 0, 0);
+                  pairCache.set(renderKey, snapshot);
+                  if (pairCache.size > MAX_CACHE_ENTRIES_PER_PAIR) {
+                    const oldest = pairCache.keys().next().value as string | undefined;
+                    if (oldest) {
+                      pairCache.delete(oldest);
+                    }
+                  }
+                }
+              }
+            }
+            canvasRenderKeyRef.current.set(canvasKey, renderKey);
+          });
+        }
       }
     });
+
+    if (renderTasks.length > 0) {
+      onRenderStart?.(renderTasks.length);
+      onRenderProgress?.(0, renderTasks.length);
+      let completed = 0;
+      for (const task of renderTasks) {
+        task();
+        completed += 1;
+        onRenderProgress?.(completed, renderTasks.length);
+      }
+      onRenderComplete?.();
+    }
 
     // Remove canvases for columns that are no longer visible
     const canvasesToRemove: string[] = [];
@@ -477,8 +585,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       histCellsBottom.each(function (i_visible) {
         const i_original = visibleIndexToOriginalIndex.get(i_visible)!;
         const column = columns[i_original];
-        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
+        const cache = columnCaches.get(column.name);
+        const allValues = shouldUseFilteredDataset
+          ? collectFiniteValues(filteredData, column.name)
+          : cache?.finiteValues ?? [];
+        const selectedValues = selectedIds.size > 0
+          ? collectFiniteValues(selectedData, column.name)
+          : [];
 
         const domain = xScales[i_visible].domain();
         const minDomain = Math.min(domain[0], domain[1]);
@@ -557,8 +670,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       histCellsRight.each(function (j_visible) {
         const j_original = visibleIndexToOriginalIndex.get(j_visible)!;
         const column = columns[j_original];
-        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
+        const cache = columnCaches.get(column.name);
+        const allValues = shouldUseFilteredDataset
+          ? collectFiniteValues(filteredData, column.name)
+          : cache?.finiteValues ?? [];
+        const selectedValues = selectedIds.size > 0
+          ? collectFiniteValues(selectedData, column.name)
+          : [];
 
         const domain = yScales[j_visible].domain();
         const minDomain = Math.min(domain[0], domain[1]);
@@ -640,7 +758,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, columnCaches, onRenderStart, onRenderProgress, onRenderComplete]);
 
   return (
     <div className="w-full h-full relative">

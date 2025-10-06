@@ -11,6 +11,8 @@ import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from '.
 import { GitHubIcon } from './components/icons';
 import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 
+const getTimestamp = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
 const App: React.FC = () => {
   const [data, setData] = useState<DataPoint[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
@@ -27,14 +29,25 @@ const App: React.FC = () => {
     x: 0,
     y: 0,
   });
+  const [loadingPhase, setLoadingPhase] = useState<'idle' | 'loading-data' | 'rendering'>('idle');
+  const [loadingStartTime, setLoadingStartTime] = useState<number | null>(null);
+  const [timeNow, setTimeNow] = useState<number>(() => getTimestamp());
+  const [renderProgress, setRenderProgress] = useState<{ completed: number; total: number }>({ completed: 0, total: 0 });
+
+  const startLoadingData = useCallback(() => {
+    setLoadingPhase('loading-data');
+    setLoadingStartTime(getTimestamp());
+    setRenderProgress({ completed: 0, total: 0 });
+  }, []);
 
   const loadSampleData = useCallback(() => {
+    startLoadingData();
     fetch('/data/sample.csv')
       .then(response => response.text())
       .then(csvText => {
         handleDataLoaded(csvText);
       });
-  }, []);
+  }, [startLoadingData]);
 
   useEffect(() => {
     loadSampleData();
@@ -51,11 +64,29 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    if (loadingPhase === 'idle' || typeof window === 'undefined') {
+      return;
+    }
+    setTimeNow(getTimestamp());
+    const interval = window.setInterval(() => {
+      setTimeNow(getTimestamp());
+    }, 100);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [loadingPhase]);
+
   const handleDataLoaded = (csvText: string) => {
+    if (loadingPhase !== 'loading-data') {
+      startLoadingData();
+    }
     const result = Papa.parse<DataPoint>(csvText, { header: true, dynamicTyping: true, skipEmptyLines: true });
     if (result.errors.length > 0) {
       console.error("CSV Parsing errors:", result.errors);
       alert("Error parsing CSV file. Check console for details.");
+      setLoadingPhase('idle');
+      setLoadingStartTime(null);
       return;
     }
 
@@ -64,6 +95,8 @@ const App: React.FC = () => {
       setData([]);
       setColumns([]);
       setLabelColumn(null);
+      setLoadingPhase('idle');
+      setLoadingStartTime(null);
       return;
     }
     
@@ -84,6 +117,10 @@ const App: React.FC = () => {
       }));
     setColumns(numericColumns);
     setBrushSelection(null);
+    if (numericColumns.length === 0) {
+      setLoadingPhase('idle');
+      setLoadingStartTime(null);
+    }
   };
 
   const handleColumnReorder = (dragIndex: number, hoverIndex: number) => {
@@ -123,6 +160,22 @@ const App: React.FC = () => {
     );
   };
 
+  const handleRenderStart = useCallback((totalPlots: number) => {
+    setLoadingPhase('rendering');
+    setLoadingStartTime(getTimestamp());
+    setRenderProgress({ completed: 0, total: totalPlots });
+  }, []);
+
+  const handleRenderProgress = useCallback((completed: number, totalPlots: number) => {
+    setRenderProgress({ completed, total: totalPlots });
+  }, []);
+
+  const handleRenderComplete = useCallback(() => {
+    setRenderProgress(prev => ({ completed: prev.total, total: prev.total }));
+    setLoadingPhase('idle');
+    setLoadingStartTime(null);
+  }, []);
+
   // Compute data to show in the table (only selected points if there's a selection)
   const tableData = brushSelection?.selectedIds 
     ? data.filter(row => brushSelection.selectedIds.has(row.__id))
@@ -159,9 +212,35 @@ const App: React.FC = () => {
     };
   }, [isDragging]);
 
+  const elapsedSeconds = loadingStartTime != null ? Math.max(0, (timeNow - loadingStartTime) / 1000) : 0;
+  const loadingOverlay = loadingPhase !== 'idle' ? (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-white/80 backdrop-blur-sm">
+      <div className="bg-white rounded-lg shadow-xl p-6 w-80 text-center space-y-4 border border-brand-secondary/30">
+        <div className="text-lg font-semibold text-brand-dark">
+          {loadingPhase === 'loading-data' ? 'Loading data…' : 'Rendering scatter plots…'}
+        </div>
+        <div className="text-sm text-gray-600">Elapsed time: {elapsedSeconds.toFixed(1)}s</div>
+        {loadingPhase === 'rendering' && renderProgress.total > 0 && (
+          <div className="space-y-2">
+            <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+              <div
+                className="h-2 bg-brand-secondary transition-all duration-150 ease-out"
+                style={{ width: `${Math.min(100, (renderProgress.completed / renderProgress.total) * 100)}%` }}
+              />
+            </div>
+            <div className="text-xs text-gray-500">
+              {renderProgress.completed} / {renderProgress.total} scatter tiles
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
+
   if (!columns.length) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
+        {loadingOverlay}
         <div className="max-w-xl text-center p-8 bg-white rounded-lg shadow-md">
           <h1 className="text-3xl font-bold text-brand-primary mb-4">Interactive Scatter Plot Matrix</h1>
           <p className="mb-6">Upload a CSV file to begin visualizing your data, or load the sample dataset to explore the tool's features.</p>
@@ -182,6 +261,7 @@ const App: React.FC = () => {
   return (
     <DndProvider backend={HTML5Backend}>
       <div className="flex flex-col h-screen font-sans">
+        {loadingOverlay}
         <Tooltip content={tooltip.content} x={tooltip.x} y={tooltip.y} visible={tooltip.visible} />
         <header className="bg-brand-dark text-white p-4 shadow-md flex justify-between items-center">
           <h1 className="text-2xl font-bold">Interactive Scatter Plot Matrix</h1>
@@ -239,6 +319,9 @@ const App: React.FC = () => {
                 labelColumn={labelColumn}
                 onPointHover={handlePointHover}
                 onPointLeave={handlePointLeave}
+                onRenderStart={handleRenderStart}
+                onRenderProgress={handleRenderProgress}
+                onRenderComplete={handleRenderComplete}
               />
             </div>
             {tableData.length > 0 && (

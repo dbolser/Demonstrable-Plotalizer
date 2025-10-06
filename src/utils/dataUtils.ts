@@ -5,8 +5,12 @@ export function filterData(
     selectedIds: Set<number>,
     filterMode: FilterMode
 ): { filteredData: DataPoint[]; selectedData: DataPoint[] } {
+    if (selectedIds.size === 0) {
+        return { filteredData: data, selectedData: [] };
+    }
+
     const selectedData = data.filter(d => selectedIds.has(d.__id));
-    if (filterMode === 'filter' && selectedIds.size > 0) {
+    if (filterMode === 'filter') {
         return { filteredData: selectedData, selectedData };
     }
     return { filteredData: data, selectedData };
