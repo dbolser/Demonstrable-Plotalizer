@@ -642,8 +642,52 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
 
       brushY
+        .on("start", function (event) {
+          if (!event.sourceEvent) return;
+          setCoordinateDisplay(prev => ({ ...prev, visible: true }));
+        })
+        .on("brush", function (event) {
+          if (!event.sourceEvent) return;
+
+          const j_visible = d3.select(this).datum() as number;
+          if (j_visible === undefined) return;
+
+          const j_original = visibleIndexToOriginalIndex.get(j_visible);
+          if (j_original === undefined || !columns[j_original]) return;
+
+          const column = columns[j_original];
+
+          // Get current mouse position relative to the SVG
+          const svgRect = ref.current?.getBoundingClientRect();
+          if (!svgRect) return;
+
+          const mouseX = event.sourceEvent.clientX - svgRect.left;
+          const mouseY = event.sourceEvent.clientY - svgRect.top;
+
+          // Calculate histogram cell position
+          const cellX = n * size; // Histograms are on the right
+          const cellY = j_visible * size;
+
+          // Convert mouse position to cell-relative coordinates
+          const cellRelativeY = mouseY - cellY;
+
+          // Convert to data value
+          const yValue = yScales[j_visible].invert(cellRelativeY);
+
+          setCoordinateDisplay({
+            visible: true,
+            x: mouseX,
+            y: mouseY,
+            xValue: null,
+            yValue: yValue,
+            xColumn: null,
+            yColumn: column.name
+          });
+        })
         .on("end", function (event) {
           if (!event.sourceEvent) return;
+
+          setCoordinateDisplay(prev => ({ ...prev, visible: false }));
 
           const j_visible = d3.select(this).datum() as number;
           if (j_visible === undefined) return;
