@@ -297,7 +297,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
       let domain: [number, number] = [0, 1];
       if (extent[0] !== undefined && extent[1] !== undefined) {
-        domain = [extent[0] as unknown as number, extent[1] as unknown as number];
+        domain = extent as [number, number];
       }
 
       if (c.scale === 'log') {
