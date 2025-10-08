@@ -9,6 +9,7 @@ import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '.
 type NumericScale = d3.ScaleContinuousNumeric<number, number>;
 
 const MAX_CACHE_ENTRIES_PER_CANVAS = 6;
+const MAX_CACHE_PIXELS_PER_CANVAS = 400 * 400;
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -236,16 +237,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const ctx = task.canvas.getContext('2d');
           if (ctx) {
             try {
-              const imageData = ctx.getImageData(0, 0, size, size);
-              let cacheForCanvas = renderCacheRef.current.get(task.canvasKey);
-              if (!cacheForCanvas) {
-                cacheForCanvas = new Map();
-                renderCacheRef.current.set(task.canvasKey, cacheForCanvas);
-              }
-              cacheForCanvas.set(task.renderKey, imageData);
-              while (cacheForCanvas.size > MAX_CACHE_ENTRIES_PER_CANVAS) {
-                const oldestKey = cacheForCanvas.keys().next().value;
-                cacheForCanvas.delete(oldestKey);
+              const pixelCount = task.canvas.width * task.canvas.height;
+              if (pixelCount <= MAX_CACHE_PIXELS_PER_CANVAS) {
+                const imageData = ctx.getImageData(0, 0, size, size);
+                let cacheForCanvas = renderCacheRef.current.get(task.canvasKey);
+                if (!cacheForCanvas) {
+                  cacheForCanvas = new Map();
+                  renderCacheRef.current.set(task.canvasKey, cacheForCanvas);
+                }
+                cacheForCanvas.set(task.renderKey, imageData);
+                if (cacheForCanvas.size > MAX_CACHE_ENTRIES_PER_CANVAS) {
+                  const oldestKey = cacheForCanvas.keys().next().value;
+                  cacheForCanvas.delete(oldestKey);
+                }
               }
             } catch (error) {
               // Ignore caching errors (e.g., if the canvas is tainted)
@@ -593,7 +597,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       canvas.style.left = `${i * size}px`;
       canvas.style.top = `${j * size}px`;
 
-      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}`;
+      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}-${size}`;
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current) {
@@ -611,6 +615,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           }
           canvasRenderKeyRef.current.set(canvasKey, renderKey);
           if (cacheForCanvas) {
+            // Refresh the entry position to preserve LRU semantics on subsequent evictions.
             cacheForCanvas.delete(renderKey);
             cacheForCanvas.set(renderKey, cachedImage);
           }
