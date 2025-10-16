@@ -29,10 +29,21 @@ const App: React.FC = () => {
   });
 
   const loadSampleData = useCallback(() => {
-    fetch('/data/sample.csv')
-      .then(response => response.text())
+    // Use Vite's base URL to ensure correct path in all environments
+    const sampleDataUrl = `${import.meta.env.BASE_URL}data/sample.csv`;
+    fetch(sampleDataUrl)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`Failed to load sample data: ${response.statusText}`);
+        }
+        return response.text();
+      })
       .then(csvText => {
         handleDataLoaded(csvText);
+      })
+      .catch(error => {
+        console.error('Error loading sample data:', error);
+        // Silently fail - user can still upload their own CSV
       });
   }, []);
 
