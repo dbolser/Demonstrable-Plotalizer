@@ -5,9 +5,18 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     return {
+      // GitHub Pages uses /<repo-name>/ as the base path
+      base: process.env.NODE_ENV === 'production' ? '/Demonstrable-Plotalizer/' : '/',
       server: {
         port: 3000,
         host: '0.0.0.0',
+      },
+      preview: {
+        port: 4173,
+        host: '0.0.0.0',
+        allowedHosts: env.VITE_ALLOWED_HOSTS
+          ? env.VITE_ALLOWED_HOSTS.split(',').map(h => h.trim()).filter(Boolean)
+          : []
       },
       plugins: [react()],
       define: {
