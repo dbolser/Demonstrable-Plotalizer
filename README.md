@@ -31,15 +31,23 @@ intelligent filtering, and real-time brushing.
    npm install
    ```
 
-2. **Run the development server:**
+2. **(Optional) Configure environment variables:**
+   ```bash
+   cp .env.example .env
+   ```
+   Then edit `.env` to add your settings:
+   - `VITE_ALLOWED_HOSTS` - Comma-separated list of allowed preview server hosts (e.g., `myserver.lan,192.168.1.33`)
+
+3. **Run the development server:**
    ```bash
    npm run dev
    ```
 
-3. **Open your browser to:**
+4. **Open your browser to:**
    ```
    http://localhost:3000
    ```
+   Or access from other machines on your network (e.g., `http://192.168.1.33:3000`)
 
 
 ## Production
@@ -82,7 +90,13 @@ This project is configured to automatically deploy to GitHub Pages when you push
 You can also trigger a deployment manually from the Actions tab by clicking "Run workflow".
 
 
-## Development
+## Project Structure
+
+### Static Assets
+- `public/` - Static files that are copied as-is during build (e.g., `public/data/sample.csv`)
+- Static assets in `public/` are served from the root URL in development and production
+
+### Development
 
 ### Running Tests
 ```bash

@@ -10,6 +10,9 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        allowedHosts: env.VITE_ALLOWED_HOSTS
+          ? env.VITE_ALLOWED_HOSTS.split(',').map(h => h.trim()).filter(Boolean)
+          : []
       },
       preview: {
         port: 4173,
