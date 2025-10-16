@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy": "npm run build && echo 'Build complete! Deploy via GitHub Actions or manually push dist/ to gh-pages branch'",
+    "deploy": "npm run build && echo 'Build complete! Deployment to GitHub Pages is triggered automatically by pushing to the main branch.'"
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
