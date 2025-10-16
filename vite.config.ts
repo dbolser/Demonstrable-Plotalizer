@@ -14,7 +14,9 @@ export default defineConfig(({ mode }) => {
       preview: {
         port: 4173,
         host: '0.0.0.0',
-        allowedHosts: ['outsee3']
+        allowedHosts: env.VITE_ALLOWED_HOSTS
+          ? env.VITE_ALLOWED_HOSTS.split(',').map(h => h.trim()).filter(Boolean)
+          : []
       },
       plugins: [react()],
       define: {
