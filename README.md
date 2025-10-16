@@ -1,6 +1,10 @@
 # Interactive Scatter Plot Matrix
 
-A high-performance, interactive scatter plot matrix visualization tool built with React, TypeScript, and D3.js. Optimized for large datasets (30k+ rows, 30+ columns) with advanced features like drag-and-drop column reordering, intelligent filtering, and real-time brushing.
+A high-performance, interactive scatter plot matrix visualization tool built
+with React, TypeScript, and D3.js. Optimized for large datasets (30k+ rows, 30+
+columns) with advanced features like drag-and-drop column reordering,
+intelligent filtering, and real-time brushing.
+
 
 ## Features
 
@@ -37,9 +41,11 @@ A high-performance, interactive scatter plot matrix visualization tool built wit
    http://localhost:3000
    ```
 
-## Development
+
+## Production
 
 ### Build for Production
+
 ```bash
 npm run build
 ```
@@ -49,6 +55,35 @@ npm run build
 npm run preview
 ```
 
+### Deploy to GitHub Pages
+
+This project is configured to automatically deploy to GitHub Pages when you push to the `main` branch.
+
+**Setup Steps:**
+
+1. **Enable GitHub Pages in your repository:**
+   - Go to your repository on GitHub
+   - Navigate to **Settings** → **Pages**
+   - Under "Build and deployment" → "Source", select **GitHub Actions**
+
+2. **Push your code to GitHub:**
+   ```bash
+   git add .
+   git commit -m "Add GitHub Pages deployment"
+   git push origin main
+   ```
+
+3. **Monitor the deployment:**
+   - Go to the **Actions** tab in your GitHub repository
+   - Watch the "Deploy to GitHub Pages" workflow run
+   - Once complete, your site will be live at: `https://yourusername.github.io/Demonstrable-Plotalizer/`
+
+**Manual Deployment:**
+You can also trigger a deployment manually from the Actions tab by clicking "Run workflow".
+
+
+## Development
+
 ### Running Tests
 ```bash
 # Run all tests once
@@ -57,12 +92,13 @@ npm run test:run
 # Run tests in watch mode
 npm test
 
-# Run tests with UI (open a fancy GUI to show test results)
+# Run tests with test UI
 npm run test:ui
 
 # Run with coverage
 npm run test:coverage
 ```
+
 
 ### Test Coverage
 - ✅ **27 passing tests**
