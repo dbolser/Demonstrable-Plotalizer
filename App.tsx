@@ -29,7 +29,7 @@ const App: React.FC = () => {
   });
 
   const loadSampleData = useCallback(() => {
-    fetch('/data/sample.csv')
+    fetch('data/sample.csv')
       .then(response => response.text())
       .then(csvText => {
         handleDataLoaded(csvText);
@@ -38,7 +38,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     loadSampleData();
-     // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -66,7 +66,7 @@ const App: React.FC = () => {
       setLabelColumn(null);
       return;
     }
-    
+
     // Add a unique ID to each data point
     const dataWithIds = rawData.map((d, i) => ({ ...d, __id: i }));
     setData(dataWithIds);
@@ -100,10 +100,10 @@ const App: React.FC = () => {
 
   const handlePointHover = (content: string, event: MouseEvent) => {
     setTooltip({
-        visible: true,
-        content: content,
-        x: event.pageX,
-        y: event.pageY
+      visible: true,
+      content: content,
+      x: event.pageX,
+      y: event.pageY
     });
   };
 
@@ -124,7 +124,7 @@ const App: React.FC = () => {
   };
 
   // Compute data to show in the table (only selected points if there's a selection)
-  const tableData = brushSelection?.selectedIds 
+  const tableData = brushSelection?.selectedIds
     ? data.filter(row => brushSelection.selectedIds.has(row.__id))
     : [];
 
