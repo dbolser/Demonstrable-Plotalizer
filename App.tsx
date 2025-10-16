@@ -29,7 +29,7 @@ const App: React.FC = () => {
   });
 
   const loadSampleData = useCallback(() => {
-    fetch('data/sample.csv')
+    fetch('/data/sample.csv')
       .then(response => response.text())
       .then(csvText => {
         handleDataLoaded(csvText);
