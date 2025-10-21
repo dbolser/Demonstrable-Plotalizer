@@ -5,6 +5,7 @@ with React, TypeScript, and D3.js. Optimized for large datasets (30k+ rows, 30+
 columns) with advanced features like drag-and-drop column reordering,
 intelligent filtering, and real-time brushing.
 
+https://dbolser.github.io/Demonstrable-Plotalizer/
 
 ## Features
 
