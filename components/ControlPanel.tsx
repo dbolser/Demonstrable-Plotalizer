@@ -232,8 +232,9 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   onClick={() => entry.id !== undefined && onDeleteFromHistory(entry.id)}
                   className="ml-2 text-gray-400 hover:text-red-500 flex-shrink-0"
                   title="Remove from history"
+                  aria-label="Remove from history"
                 >
-                  🗑
+                  <span aria-hidden="true">🗑</span>
                 </button>
               </div>
             ))}
