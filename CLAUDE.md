@@ -7,49 +7,66 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Development
 - `npm run dev` - Start the development server on port 3000
 - `npm run build` - Build the production version
-- `npm run preview` - Preview the production build
+- `npm run preview` - Preview the production build (port 4173)
+
+### Testing
+- `npm run test:run` - Run all tests once
+- `npm test` - Run tests in watch mode
+- `npm run test:ui` - Test UI dashboard
+- `npm run test:coverage` - Coverage report
 
 ### Environment Setup
 - Set `GEMINI_API_KEY` in `.env.local` for the Gemini API integration
-- The development server runs on `http://localhost:3000`
+- See `.env.example` for available environment variables
 
 ## Architecture
 
-This is a React-based interactive scatter plot matrix visualization application built with Vite, TypeScript, and D3.js.
+React 19 + TypeScript + D3.js v7 scatter plot matrix for exploring large datasets (30k+ rows, 30+ columns). Built with Vite, uses Canvas for rendering performance.
 
-### Core Components Structure
-- **App.tsx** - Main application component managing global state (data, columns, brush selection, filter mode)
-- **ScatterPlotMatrix.tsx** - The core visualization component handling D3.js rendering, drag-and-drop column reordering, and brushing interactions
-- **ControlPanel.tsx** - Sidebar controls for column management, data upload, and visualization settings
-- **FileUpload.tsx** - CSV file upload and parsing functionality using PapaParse
-- **Tooltip.tsx** - Hover tooltips for data points
+### State and Data Flow
 
-### Key Libraries and Technologies
-- **React 19** with TypeScript for UI components and state management
-- **D3.js v7** for data visualization, scales, and brushing interactions
-- **react-dnd** for drag-and-drop column reordering in the matrix headers
-- **PapaParse** for CSV file parsing and data loading
-- **Vite** as the build tool and development server
+All global state lives in `App.tsx`:
+- `data: DataPoint[]` - CSV rows augmented with `__id: number` for stable identity
+- `columns: Column[]` - visibility, scale (`linear`|`log`), name per column
+- `brushSelection: BrushSelection | null` - screen coordinates + `selectedIds: Set<number>`
+- `filterMode: 'highlight' | 'filter'` - dims vs hides non-selected points
 
-### Data Flow
-- CSV data is parsed and augmented with unique `__id` properties for each data point
-- Columns are detected automatically with numeric columns becoming matrix dimensions
-- String columns are auto-detected as label columns for tooltips
-- Brush selections create filtered data sets that propagate through all visualizations
+CSV parsing (PapaParse) → auto-detect numeric vs. string columns → first string column becomes the label shown in tooltips. ESC key clears selection.
 
-### State Management
-- Global state in App.tsx includes: data array, columns configuration, brush selection coordinates/IDs, filter mode, and UI preferences
-- ScatterPlotMatrix uses complex memoization to map between visible column indices and original column indices for drag-and-drop reordering
-- Brush interactions update both visual brush rectangles and selected data point IDs simultaneously
+### Core Types (`types.ts`)
 
-### Visualization Features
-- Interactive scatter plot matrix with brushing for data selection
-- Optional histograms on matrix borders with independent brushing
-- Dynamic column visibility, scaling (linear/log), and drag-and-drop reordering
-- Two filter modes: "highlight" (dimming) and "filter" (hiding) non-selected points
-- Responsive tooltips showing label column values on hover
+```typescript
+DataPoint = { [key: string]: number | string, __id: number }
+Column = { name: string, scale: ScaleType, visible: boolean }
+BrushSelection = { indexX, indexY, x0, y0, x1, y1, selectedIds: Set<number> } | null
+```
 
-## File Structure
-- Root TypeScript files: App.tsx, index.tsx, types.ts
-- Components directory: All reusable UI components
-- Vite configuration supports React, TypeScript, and path aliases via "@/*"
+### Rendering Pipeline (`ScatterPlotMatrix.tsx`)
+
+The matrix uses **Canvas** (not SVG) for performance. Key patterns:
+
+1. **Canvas caching** - Rendered images are cached by a hash key; cache is invalidated when selection or data changes
+2. **Spatial grid (20×20)** - Each scatter plot divides its space into a grid; brush queries only check cells overlapping the brush rectangle instead of all points
+3. **Selection state hashing** (`selectionUtils.ts`) - `computeSelectedStateHash()` generates cache keys; currently uses first 5 IDs (known collision risk for large identical-prefix selections)
+4. **Column visibility mapping** (`columnUtils.ts`) - `mapVisibleColumns()` translates drag-and-drop visible indices back to original column indices without re-rendering
+
+Points: gray `#ccc` at 30% opacity (unselected when something is selected), blue `#1e40af` at 80% opacity (selected).
+
+### Utility Modules (`src/utils/`)
+
+- `columnUtils.ts` - `reorderColumns`, `filterColumns`, `mapVisibleColumns`
+- `dataUtils.ts` - `filterData(data, selectedIds, filterMode)` splits data by selection
+- `selectionUtils.ts` - `createSpatialGrid`, `getPointsInBrush`, `computeSelectedStateHash`
+
+### Performance Benchmarks (enforced by tests)
+
+- 30k row filtering: < 100ms
+- 30 column filtering: < 10ms
+- Canvas caching operations: < 50ms
+- Image restoration: < 20ms
+- Column reordering: < 1ms
+
+### Deployment
+
+- GitHub Pages via `deploy.yml` on push to `main`
+- Vite uses base path `/Demonstrable-Plotalizer/` in production, `/` in dev
