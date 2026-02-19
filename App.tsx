@@ -55,7 +55,7 @@ const App: React.FC = () => {
 
   // Load recent files from IndexedDB on mount
   useEffect(() => {
-    getHistory().then(setRecentFiles).catch(() => {});
+    getHistory().then(setRecentFiles).catch(err => console.error('Failed to load file history:', err));
   }, []);
 
   useEffect(() => {
