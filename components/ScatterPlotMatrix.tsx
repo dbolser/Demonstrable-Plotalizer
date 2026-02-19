@@ -840,8 +840,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     }
 
     // Signal that render is complete (after browser paints)
-    setTimeout(() => onRenderComplete?.(), 0);
+    const timeoutId = setTimeout(() => onRenderComplete?.(), 0);
 
+    return () => {
+      clearTimeout(timeoutId);
+    };
   }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete]);
 
   return (
