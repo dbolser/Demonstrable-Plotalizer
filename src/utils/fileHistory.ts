@@ -80,7 +80,8 @@ export async function getHistory(): Promise<FileHistoryEntry[]> {
 
         // Return sorted by most recent first
         return entries.sort((a, b) => b.timestamp - a.timestamp);
-    } catch {
+    } catch (err) {
+        console.error('Failed to retrieve file history:', err);
         return [];
     }
 }
