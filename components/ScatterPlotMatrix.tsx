@@ -18,6 +18,8 @@ interface ScatterPlotMatrixProps {
   labelColumn: string | null;
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
+  cellSize?: number;
+  onRenderComplete?: () => void;
 }
 
 interface CoordinateDisplay {
@@ -108,7 +110,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   useUniformLogBins,
   labelColumn,
   onPointHover,
-  onPointLeave
+  onPointLeave,
+  cellSize = 150,
+  onRenderComplete,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -124,7 +128,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     xColumn: null,
     yColumn: null
   });
-  const size = 150;
+  const size = cellSize;
   const padding = 20;
 
   // Tooltip positioning constants
@@ -480,6 +484,12 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         canvasElementsRef.current.set(canvasKey, canvas);
       }
 
+      // Update canvas dimensions if size changed
+      if (canvas.width !== size || canvas.height !== size) {
+        canvas.width = size;
+        canvas.height = size;
+      }
+
       if (!canvas.isConnected) {
         container.appendChild(canvas);
       }
@@ -487,7 +497,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       canvas.style.left = `${i * size}px`;
       canvas.style.top = `${j * size}px`;
 
-      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}`;
+      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}-${size}`;
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
@@ -829,7 +839,10 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash]);
+    // Signal that render is complete (after browser paints)
+    setTimeout(() => onRenderComplete?.(), 0);
+
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete]);
 
   return (
     <div className="w-full h-full relative">

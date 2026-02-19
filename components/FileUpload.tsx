@@ -3,7 +3,7 @@ import React, { useCallback, useRef } from 'react';
 import { UploadIcon } from './icons';
 
 interface FileUploadProps {
-  onDataLoaded: (data: string) => void;
+  onDataLoaded: (data: string, filename: string) => void;
 }
 
 export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded }) => {
@@ -16,7 +16,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded }) => {
       reader.onload = (e) => {
         const text = e.target?.result;
         if (typeof text === 'string') {
-          onDataLoaded(text);
+          onDataLoaded(text, file.name);
         }
       };
       reader.readAsText(file);
@@ -36,7 +36,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onDataLoaded }) => {
         reader.onload = (e) => {
             const text = e.target?.result;
             if (typeof text === 'string') {
-                onDataLoaded(text);
+                onDataLoaded(text, file.name);
             }
         };
         reader.readAsText(file);
