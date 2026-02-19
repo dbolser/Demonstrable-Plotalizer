@@ -127,6 +127,12 @@ const App: React.FC = () => {
     setBrushSelection(null);
     setShowColumnGroups(false);
     setColumnGroups(new Map());
+
+    // Clear isRecalculating if there are no numeric columns, since
+    // ScatterPlotMatrix won't mount and onRenderComplete won't be called
+    if (numericColumns.length === 0) {
+      setIsRecalculating(false);
+    }
   }, []);
 
   const handleDataLoaded = useCallback((csvText: string) => {
