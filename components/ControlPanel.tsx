@@ -217,7 +217,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           <div className="space-y-2">
             {recentFiles.map(entry => (
               <div
-                key={entry.id}
+                key={entry.id ?? `${entry.filename}-${entry.timestamp}`}
                 className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 rounded-lg"
               >
                 <button
