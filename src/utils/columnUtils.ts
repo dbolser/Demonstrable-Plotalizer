@@ -17,6 +17,11 @@ export function filterColumns(columns: Column[], filter: string): Column[] {
     // B2: Split by comma for OR logic; B5: AND with existing visibility
     const terms = normalizedFilter.split(',').map(t => t.trim()).filter(Boolean);
 
+    // If splitting yields no actual terms (e.g. input is only commas/whitespace),
+    // treat this as an empty filter and return columns unchanged.
+    if (terms.length === 0) {
+        return columns;
+    }
     let didChange = false;
     const nextColumns: Column[] = new Array(columns.length);
 
