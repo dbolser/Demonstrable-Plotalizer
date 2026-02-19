@@ -24,7 +24,7 @@ export function filterColumns(columns: Column[], filter: string): Column[] {
         const col = columns[index];
         const matchesFilter = terms.some(term => col.name.toLowerCase().includes(term));
         // Filter is additive on top of manual visibility state
-        const shouldBeVisible = col.visible && matchesFilter;
+        const shouldBeVisible = matchesFilter;
 
         if (col.visible === shouldBeVisible) {
             nextColumns[index] = col;
