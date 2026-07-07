@@ -7,19 +7,21 @@ import {
   getStackConfig,
   computeStackedBinCounts,
   buildStackSegments,
+  isFiniteCellValue,
 } from '../utils/histogramStackUtils';
 
 const NO_SELECTION = new Set<number>();
 
 /** Bin rows by a numeric column the same way the histograms do. */
 const binRows = (data: DataPoint[], column: string, thresholds = 10) => {
-  const values = data.map(d => +d[column]).filter(isFinite);
+  const rows = data.filter(d => isFiniteCellValue(d[column]));
+  const values = rows.map(d => +d[column]);
   const [min, max] = d3.extent(values) as [number, number];
   return d3
     .bin<DataPoint, number>()
     .value(d => +d[column])
     .domain([min, max])
-    .thresholds(thresholds)(data.filter(d => isFinite(+d[column])));
+    .thresholds(thresholds)(rows);
 };
 
 describe('getStackConfig', () => {
@@ -127,6 +129,97 @@ describe('computeStackedBinCounts', () => {
     const lastPresent = [...total].reverse().find(stacks => stacks.some(c => c > 0))!;
     expect(firstPresent[0]).toBeGreaterThan(0);
     expect(lastPresent[config.numStacks - 1]).toBeGreaterThan(0);
+  });
+});
+
+describe('missing-value handling (stored nulls from PapaParse dynamicTyping)', () => {
+  it('isFiniteCellValue rejects null/undefined/blank strings but accepts real zeros', () => {
+    expect(isFiniteCellValue(null)).toBe(false);
+    expect(isFiniteCellValue(undefined)).toBe(false);
+    expect(isFiniteCellValue('')).toBe(false);
+    expect(isFiniteCellValue('   ')).toBe(false);
+    expect(isFiniteCellValue('abc')).toBe(false);
+    expect(isFiniteCellValue(Infinity)).toBe(false);
+    expect(isFiniteCellValue(NaN)).toBe(false);
+    expect(isFiniteCellValue(0)).toBe(true);
+    expect(isFiniteCellValue('0')).toBe(true);
+    expect(isFiniteCellValue(-3.5)).toBe(true);
+    expect(isFiniteCellValue('42')).toBe(true);
+  });
+
+  it('rows with null in the rainbow ordering column stack into the gray missing segment', () => {
+    // Rows 8 and 9 have a stored null / blank rank cell; all rows have a
+    // finite binned value, so they must appear in the histogram — but in
+    // the missing segment, consistent with their gray point color.
+    const data: DataPoint[] = Array.from({ length: 10 }, (_, i) => ({
+      __id: i,
+      v: i, // binned column: always finite
+      rank: i < 8 ? i : (null as unknown as number), // color column
+    }));
+    (data[9] as DataPoint).rank = '  ' as unknown as number; // blank string cell
+
+    const state = computeColorState(data, 'rainbow', null, 'rank')!;
+    const config = getStackConfig(state);
+    const bins = binRows(data, 'v', 5);
+    const { total } = computeStackedBinCounts(bins, state, config, NO_SELECTION);
+
+    // All 10 rows are counted, and exactly the 2 null-ranked rows are in
+    // the trailing missing stack (index numStacks). None of them was
+    // coerced to rank 0 (which would put them in gradient stack 0 next to
+    // the genuinely lowest-ranked row).
+    const grandTotal = total.flat().reduce((a, c) => a + c, 0);
+    expect(grandTotal).toBe(10);
+    const missingCount = total.reduce((a, stacks) => a + stacks[config.numStacks], 0);
+    expect(missingCount).toBe(2);
+
+    // The bins holding rows 8 and 9 carry the missing segment.
+    const lastBin = total[total.length - 1];
+    expect(lastBin[config.numStacks]).toBe(2);
+    // Segment building keeps gray last, from the running cumulative total.
+    const segments = buildStackSegments(total, config.stackColors);
+    const graySegments = segments.filter(s => s.stackIndex === config.numStacks);
+    expect(graySegments).toHaveLength(1);
+    expect(graySegments[0].color).toBe(MISSING_COLOR);
+    expect(graySegments[0].end - graySegments[0].start).toBe(2);
+  });
+
+  it('rows with null in the category column stack into the gray missing segment', () => {
+    const data: DataPoint[] = [
+      { __id: 0, cat: 'a', v: 1 },
+      { __id: 1, cat: null as unknown as string, v: 1 },
+      { __id: 2, cat: 'a', v: 9 },
+      { __id: 3, cat: '', v: 9 },
+    ];
+    const state = computeColorState(data, 'category', 'cat', null)!;
+    const config = getStackConfig(state);
+    const bins = binRows(data, 'v', 2);
+    const { total } = computeStackedBinCounts(bins, state, config, NO_SELECTION);
+
+    expect(total[0][0]).toBe(1); // 'a'
+    expect(total[0][config.numStacks]).toBe(1); // null cell -> gray
+    const lastBin = total[total.length - 1];
+    expect(lastBin[0]).toBe(1); // 'a'
+    expect(lastBin[config.numStacks]).toBe(1); // '' cell -> gray
+  });
+
+  it('rows with null in the BINNED column are excluded, not counted as zeros', () => {
+    // Regression: isFinite(+null) === isFinite(0) === true, so a plain
+    // isFinite(+v) filter binned null cells as real zeros in the 0-bin.
+    const data: DataPoint[] = [
+      { __id: 0, v: 0, rank: 0 }, // genuine zero — must stay
+      { __id: 1, v: null as unknown as number, rank: 1 },
+      { __id: 2, v: '' as unknown as number, rank: 2 },
+      { __id: 3, v: 10, rank: 3 },
+    ];
+    const state = computeColorState(data, 'rainbow', null, 'rank')!;
+    const config = getStackConfig(state);
+    const bins = binRows(data, 'v', 2);
+    const { total } = computeStackedBinCounts(bins, state, config, NO_SELECTION);
+
+    const grandTotal = total.flat().reduce((a, c) => a + c, 0);
+    expect(grandTotal).toBe(2); // only rows 0 and 3
+    const binnedIds = bins.flatMap(bin => bin.map(r => r.__id));
+    expect(binnedIds.sort()).toEqual([0, 3]);
   });
 });
 

@@ -13,6 +13,7 @@ import {
   getStackConfig,
   computeStackedBinCounts,
   buildStackSegments,
+  isFiniteCellValue,
 } from '../src/utils/histogramStackUtils';
 
 interface ScatterPlotMatrixProps {
@@ -865,7 +866,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const rowBinGen = Array.isArray(thresholds)
             ? rowBinGenBase.thresholds(thresholds)
             : rowBinGenBase.thresholds(thresholds);
-          const rowBins = rowBinGen(filteredData.filter(d => isFinite(+d[column.name])));
+          // isFiniteCellValue (not isFinite(+v)): +null === 0, which would
+          // bin rows with missing cells as real zeros. See histogramStackUtils.
+          const rowBins = rowBinGen(filteredData.filter(d => isFiniteCellValue(d[column.name])));
 
           const config = getStackConfig(colorState);
           const { total, selected } = computeStackedBinCounts(rowBins, colorState, config, selectedIds);
@@ -1035,7 +1038,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           const rowBinGen = Array.isArray(thresholds)
             ? rowBinGenBase.thresholds(thresholds)
             : rowBinGenBase.thresholds(thresholds);
-          const rowBins = rowBinGen(filteredData.filter(d => isFinite(+d[column.name])));
+          // isFiniteCellValue (not isFinite(+v)): +null === 0, which would
+          // bin rows with missing cells as real zeros. See histogramStackUtils.
+          const rowBins = rowBinGen(filteredData.filter(d => isFiniteCellValue(d[column.name])));
 
           const config = getStackConfig(colorState);
           const { total, selected } = computeStackedBinCounts(rowBins, colorState, config, selectedIds);
