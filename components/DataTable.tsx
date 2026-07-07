@@ -6,6 +6,10 @@ interface DataTableProps {
   columns: Column[];
   stringColumns: string[];
   maxRows?: number;
+  /** Panel heading; defaults to "Selected Data" for selection views. */
+  heading?: string;
+  /** Optional "Showing first X of N rows" note when the data was capped. */
+  capNote?: string | null;
 }
 
 type SortConfig = {
@@ -17,9 +21,11 @@ export const DataTable: React.FC<DataTableProps> = ({
   data,
   columns,
   stringColumns,
-  maxRows = 20
+  maxRows = 20,
+  heading = 'Selected Data',
+  capNote = null
 }) => {
-  const [currentPage, setCurrentPage] = useState(0);
+  const [rawPage, setCurrentPage] = useState(0);
     const [sortConfig, setSortConfig] = useState<SortConfig>(null);
 
   const visibleColumns = columns.filter(c => c.visible);
@@ -55,6 +61,10 @@ export const DataTable: React.FC<DataTableProps> = ({
 
     const totalRows = sortedData.length;
   const totalPages = Math.ceil(totalRows / maxRows);
+  // Clamp: the dataset can shrink under us (e.g. switching from the full
+  // dataset to a small selection), which would otherwise strand us on an
+  // out-of-range page.
+  const currentPage = Math.min(rawPage, Math.max(0, totalPages - 1));
   const startIdx = currentPage * maxRows;
   const endIdx = Math.min(startIdx + maxRows, totalRows);
     const pageData = sortedData.slice(startIdx, endIdx);
@@ -75,13 +85,18 @@ export const DataTable: React.FC<DataTableProps> = ({
   return (
       <div className="bg-white border-t border-gray-200 p-4 h-full flex flex-col overflow-hidden">
           <div className="flex justify-between items-center mb-3 flex-shrink-0">
-        <h3 className="text-lg font-semibold text-gray-800">
-          Selected Data ({totalRows.toLocaleString()} row{totalRows !== 1 ? 's' : ''})
-        </h3>
+        <div className="flex items-baseline space-x-3">
+          <h3 className="text-lg font-semibold text-gray-800">
+            {heading} ({totalRows.toLocaleString()} row{totalRows !== 1 ? 's' : ''})
+          </h3>
+          {capNote && (
+            <span className="text-sm text-amber-700">{capNote}</span>
+          )}
+        </div>
         {totalPages > 1 && (
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+              onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
               disabled={currentPage === 0}
               className="px-3 py-1 bg-gray-200 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300"
             >
@@ -91,7 +106,7 @@ export const DataTable: React.FC<DataTableProps> = ({
               Page {currentPage + 1} of {totalPages}
             </span>
             <button
-              onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+              onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
               disabled={currentPage >= totalPages - 1}
               className="px-3 py-1 bg-gray-200 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300"
             >

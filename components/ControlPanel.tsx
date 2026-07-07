@@ -22,6 +22,8 @@ interface ControlPanelProps {
   setFilterMode: (mode: FilterMode) => void;
   showHistograms: boolean;
   setShowHistograms: (show: boolean) => void;
+  showDataTable: boolean;
+  setShowDataTable: (show: boolean) => void;
   useUniformLogBins: boolean;
   setUseUniformLogBins: (useUniform: boolean) => void;
   globalLogScale: boolean;
@@ -53,6 +55,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setFilterMode,
   showHistograms,
   setShowHistograms,
+  showDataTable,
+  setShowDataTable,
   useUniformLogBins,
   setUseUniformLogBins,
   globalLogScale,
@@ -325,6 +329,16 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               id="globalLogScale"
               checked={globalLogScale}
               onChange={(e) => onToggleGlobalLogScale(e.target.checked)}
+              className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <label htmlFor="showDataTable" className="font-semibold text-gray-700">Show Data Table</label>
+            <input
+              type="checkbox"
+              id="showDataTable"
+              checked={showDataTable}
+              onChange={(e) => setShowDataTable(e.target.checked)}
               className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
             />
           </div>
