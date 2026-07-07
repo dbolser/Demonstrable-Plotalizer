@@ -7,7 +7,8 @@ import { ControlPanel } from './components/ControlPanel';
 import { ScatterPlotMatrix } from './components/ScatterPlotMatrix';
 import { Tooltip } from './components/Tooltip';
 import { DataTable } from './components/DataTable';
-import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode } from './types';
+import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode, ColorMode } from './types';
+import { computeColorState } from './src/utils/colorUtils';
 import { GitHubIcon } from './components/icons';
 import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 import { detectColumnGroups } from './src/utils/groupUtils';
@@ -42,6 +43,10 @@ const App: React.FC = () => {
   const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
   const [isUrlLoading, setIsUrlLoading] = useState<boolean>(false);
   const [pcaVariance, setPcaVariance] = useState<PCAVarianceEntry[] | null>(null);
+  // Issue #39: point coloring. rainbowOrderColumn = null means file order.
+  const [colorMode, setColorMode] = useState<ColorMode>('none');
+  const [categoryColorColumn, setCategoryColorColumn] = useState<string | null>(null);
+  const [rainbowOrderColumn, setRainbowOrderColumn] = useState<string | null>(null);
 
   // Monotonic id for data loads. A single counter guards every async stage:
   // remote fetches (URL/sample) capture the id before awaiting and drop stale
@@ -139,6 +144,10 @@ const App: React.FC = () => {
     setColumns(numericColumns);
     setColumnFilter('');
     setPcaVariance(null);
+    // Color-by columns are dataset-specific; the mode itself is kept so e.g.
+    // rainbow-by-file-order survives loading a new file.
+    setCategoryColorColumn(prev => (prev && allStringCols.includes(prev) ? prev : null));
+    setRainbowOrderColumn(null);
     setBrushSelection(null);
     setShowColumnGroups(false);
     setColumnGroups(new Map());
@@ -358,6 +367,19 @@ const App: React.FC = () => {
     })));
   }, [data, displayColumns]);
 
+  // Issue #39: precompute the per-row color state once per mode/column/data
+  // change; the canvas paint loop only reads the resulting typed array.
+  const colorState = useMemo(
+    () => computeColorState(data, colorMode, categoryColorColumn, rainbowOrderColumn),
+    [data, colorMode, categoryColorColumn, rainbowOrderColumn]
+  );
+
+  // Rainbow mode: clicking a diagonal column label orders the gradient by
+  // that column's rank; clicking the active column again reverts to file order.
+  const handleColumnLabelClick = useCallback((columnName: string) => {
+    setRainbowOrderColumn(prev => (prev === columnName ? null : columnName));
+  }, []);
+
   // Compute data to show in the table (only selected points if there's a selection).
   // Memoized so per-frame render-progress updates don't re-filter large datasets.
   const tableData = useMemo(
@@ -506,6 +528,13 @@ const App: React.FC = () => {
               onDeleteFromHistory={handleDeleteFromHistory}
               onAddPCA={handleAddPCA}
               pcaVariance={pcaVariance}
+              colorMode={colorMode}
+              setColorMode={setColorMode}
+              categoryColorColumn={categoryColorColumn}
+              setCategoryColorColumn={setCategoryColorColumn}
+              rainbowOrderColumn={rainbowOrderColumn}
+              onResetRainbowOrder={() => setRainbowOrderColumn(null)}
+              colorState={colorState}
             />
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
@@ -545,6 +574,9 @@ const App: React.FC = () => {
                 cellSize={cellSize}
                 onRenderComplete={handleRenderComplete}
                 onRenderProgress={handleRenderProgress}
+                colorState={colorState}
+                rainbowOrderColumn={rainbowOrderColumn}
+                onColumnLabelClick={handleColumnLabelClick}
               />
             </div>
             {tableData.length > 0 && (

@@ -8,6 +8,7 @@ HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
   arc: vi.fn(),
   fill: vi.fn(),
   beginPath: vi.fn(),
+  moveTo: vi.fn(),
   drawImage: vi.fn(),
 })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 

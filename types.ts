@@ -27,3 +27,8 @@ export type BrushSelection = {
 } | null;
 
 export type FilterMode = 'highlight' | 'filter';
+
+// Point coloring: flat selected/unselected ('none'), categorical palette by
+// a string column ('category'), or a viridis gradient by row order or by a
+// numeric column's rank ('rainbow').
+export type ColorMode = 'none' | 'category' | 'rainbow';

@@ -6,6 +6,9 @@ import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
+import { MISSING_COLOR, MISSING_SLOT } from '../src/utils/colorUtils';
+import type { ColorState } from '../src/utils/colorUtils';
+import { buildRenderKey } from '../src/utils/renderKeyUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -22,6 +25,15 @@ interface ScatterPlotMatrixProps {
   cellSize?: number;
   onRenderComplete?: () => void;
   onRenderProgress?: (cellsDone: number, cellsTotal: number) => void;
+  /** Precomputed per-row color state, or null for the classic flat colors. */
+  colorState?: ColorState | null;
+  /** Column currently driving the rainbow gradient order (highlighted label). */
+  rainbowOrderColumn?: string | null;
+  /**
+   * Fired when a diagonal column label is clicked (not dragged). Used in
+   * rainbow mode to re-order the gradient by that column's rank.
+   */
+  onColumnLabelClick?: (columnName: string) => void;
 }
 
 // RAF-budgeted canvas rendering: paint at most this many cells per frame…
@@ -54,14 +66,41 @@ interface HistogramBin {
   selectedLength: number;
 }
 
+// Draw a batch of points that share one fill color as a single path:
+// coords is a flat [x0, y0, x1, y1, ...] array.
+const drawPointBatch = (
+  ctx: CanvasRenderingContext2D,
+  coords: number[],
+  color: string,
+  alpha: number
+) => {
+  if (coords.length === 0) return;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.beginPath();
+  for (let k = 0; k < coords.length; k += 2) {
+    const sx = coords[k];
+    const sy = coords[k + 1];
+    ctx.moveTo(sx + 2.5, sy);
+    ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI);
+  }
+  ctx.fill();
+};
+
 const DraggableHeader: React.FC<{
   name: string,
   index: number,
   onColumnReorder: (dragIndex: number, hoverIndex: number) => void,
   onDragStart?: () => void,
-  onDragEnd?: () => void
-}> = ({ name, index, onColumnReorder, onDragStart, onDragEnd }) => {
+  onDragEnd?: () => void,
+  onLabelClick?: (name: string) => void,
+  labelClickHint?: string | null,
+  isRainbowOrderColumn?: boolean
+}> = ({ name, index, onColumnReorder, onDragStart, onDragEnd, onLabelClick, labelClickHint, isRainbowOrderColumn }) => {
   const ref = useRef<HTMLDivElement>(null);
+  // A drag also fires a click on drop; suppress that click so dragging a
+  // column to reorder never doubles as a rainbow-order toggle.
+  const dragHappenedRef = useRef(false);
 
   const [{ isOver }, drop] = useDrop({
     accept: 'column',
@@ -80,6 +119,7 @@ const DraggableHeader: React.FC<{
   const [{ isDragging }, drag] = useDrag({
     type: 'column',
     item: () => {
+      dragHappenedRef.current = true;
       onDragStart?.();
       return { index, originalIndex: index };
     },
@@ -93,13 +133,26 @@ const DraggableHeader: React.FC<{
 
   drag(drop(ref));
 
+  const handleClick = () => {
+    if (dragHappenedRef.current) {
+      dragHappenedRef.current = false;
+      return;
+    }
+    onLabelClick?.(name);
+  };
+
   return (
     <div
       ref={ref}
       style={{ opacity: isDragging ? 0.5 : 1 }}
+      onMouseDown={() => { dragHappenedRef.current = false; }}
+      onClick={onLabelClick ? handleClick : undefined}
+      title={labelClickHint ?? undefined}
+      data-rainbow-order={isRainbowOrderColumn ? 'true' : undefined}
       className={`w-full h-full flex items-center justify-center border rounded cursor-move select-none ${isDragging ? 'border-brand-secondary bg-gray-100' :
         isOver ? 'border-brand-primary bg-brand-primary/10' :
-          'border-gray-300'
+          isRainbowOrderColumn ? 'border-purple-500 ring-2 ring-purple-500 bg-purple-50' :
+            'border-gray-300'
         }`}
     >
       {isDragging ? (
@@ -107,7 +160,14 @@ const DraggableHeader: React.FC<{
       ) : isOver ? (
         <span className="font-bold text-brand-primary p-2 text-center break-all">Drop here</span>
       ) : (
-        <span className="font-bold text-brand-dark p-2 text-center break-all">{name}</span>
+        <span className="font-bold text-brand-dark p-2 text-center break-all">
+          {name}
+          {isRainbowOrderColumn && (
+            <span className="block text-[10px] font-semibold text-purple-600 uppercase tracking-wide">
+              gradient order
+            </span>
+          )}
+        </span>
       )}
     </div>
   );
@@ -129,6 +189,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   cellSize = 150,
   onRenderComplete,
   onRenderProgress,
+  colorState = null,
+  rainbowOrderColumn = null,
+  onColumnLabelClick,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -174,6 +237,56 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     ctx.clearRect(0, 0, size, size);
 
+    if (colorState) {
+      // Color-by paint path. The per-row color slot was precomputed once per
+      // mode/column/data change (colorState.slotById, indexed by __id), so
+      // the loop below only does typed-array lookups. Points are bucketed by
+      // slot in a single pass and painted as one path per color, keeping the
+      // number of fill calls bounded (10 categories / 64 gradient buckets)
+      // regardless of row count.
+      const { slotById, slotColors } = colorState;
+      const numSlots = slotColors.length;
+      const hasSelection = selectedIds.size > 0;
+
+      // Flat coordinate buffers per slot; last bucket = missing/NaN rows.
+      const coloredCoords: number[][] = Array.from({ length: numSlots + 1 }, () => []);
+      const selectedCoords: number[][] = hasSelection
+        ? Array.from({ length: numSlots + 1 }, () => [])
+        : coloredCoords;
+      const dimmedCoords: number[] = [];
+
+      for (const d of data) {
+        const x = +d[xCol];
+        const y = +d[yCol];
+        if (!isFinite(x) || !isFinite(y)) continue;
+
+        const screenX = xScale(x);
+        const screenY = yScale(y);
+        const isSelected = hasSelection && selectedIds.has(d.__id);
+
+        if (hasSelection && !isSelected) {
+          // Unselected points keep the classic dimmed-gray treatment so the
+          // selection stays readable even with many colors on screen.
+          if (filterMode === 'highlight') dimmedCoords.push(screenX, screenY);
+          continue;
+        }
+
+        const slot = slotById[d.__id];
+        const bucket = slot === MISSING_SLOT || slot >= numSlots ? numSlots : slot;
+        selectedCoords[bucket].push(screenX, screenY);
+      }
+
+      drawPointBatch(ctx, dimmedCoords, '#ccc', 0.3);
+      const alpha = hasSelection ? 0.8 : 0.7;
+      for (let s = 0; s < numSlots; s++) {
+        drawPointBatch(ctx, selectedCoords[s], slotColors[s], alpha);
+      }
+      drawPointBatch(ctx, selectedCoords[numSlots], MISSING_COLOR, alpha);
+
+      ctx.globalAlpha = 1;
+      return;
+    }
+
     // Render non-selected points first
     if (filterMode === 'highlight' || selectedIds.size === 0) {
       ctx.fillStyle = selectedIds.size > 0 ? '#ccc' : '#4b5563';
@@ -217,7 +330,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     }
 
     ctx.globalAlpha = 1;
-  }, [size]);
+  }, [size, colorState]);
 
   const { filteredData, selectedData } = useMemo(
     () => filterData(data, selectedIds, filterMode),
@@ -554,7 +667,17 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       canvas.style.left = `${i * size}px`;
       canvas.style.top = `${j * size}px`;
 
-      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}-${size}`;
+      const renderKey = buildRenderKey({
+        xColName: colX.name,
+        yColName: colY.name,
+        xScale: colX.scale,
+        yScale: colY.scale,
+        filterMode,
+        dataStateHash,
+        selectedStateHash,
+        size,
+        colorStateHash: colorState?.hash ?? 'none',
+      });
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
@@ -1001,7 +1124,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete, onRenderProgress]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
 
   return (
     <div className="w-full h-full relative">
@@ -1037,6 +1160,17 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
                 onColumnReorder={onColumnReorder}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
+                onLabelClick={colorState?.mode === 'rainbow' ? onColumnLabelClick : undefined}
+                labelClickHint={
+                  colorState?.mode === 'rainbow'
+                    ? column.name === rainbowOrderColumn
+                      ? 'Rainbow gradient is ordered by this column. Click to revert to file order.'
+                      : "Click to order the rainbow gradient by this column's rank"
+                    : null
+                }
+                isRainbowOrderColumn={
+                  colorState?.mode === 'rainbow' && column.name === rainbowOrderColumn
+                }
               />
             </div>
           );
