@@ -5,6 +5,7 @@ import type { ColorState } from '../src/utils/colorUtils';
 import type { FacetColumnSummary, FacetSelections } from '../src/utils/facetUtils';
 import { FileUpload } from './FileUpload';
 import { UrlInput } from './UrlInput';
+import { PanelSection } from './PanelSection';
 import { DownloadIcon } from './icons';
 import type { FileHistoryEntry } from '../src/utils/fileHistory';
 import { formatRelativeTime } from '../src/utils/fileHistory';
@@ -284,10 +285,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     </div>
   );
 
+  // Collapsed-header status hints, cheaply derived from existing props.
+  const hiddenColumnCount = columns.filter(col => !col.visible).length;
+  const columnsHint = hiddenColumnCount > 0 ? `${hiddenColumnCount} hidden` : null;
+  const colorHint =
+    colorMode === 'none'
+      ? null
+      : colorMode === 'category'
+        ? `category${categoryColorColumn ? `: ${categoryColorColumn}` : ''}`
+        : 'rainbow';
+  const analysisHint = correlationMetric !== 'pearson' ? 'Spearman' : null;
+  const facetsHint = activeFacetCount > 0 ? `${activeFacetCount} active` : null;
+
   return (
     <div className="flex flex-col space-y-6">
-      <div>
-        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Data Source</h2>
+      <PanelSection title="Data" defaultOpen>
         <FileUpload onDataLoaded={onDataLoaded} />
         <div className="mt-3">
           <p className="text-xs font-medium text-gray-500 mb-1">Load from URL</p>
@@ -298,41 +310,39 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             Label column{stringColumns.length > 1 ? 's' : ''}: {stringColumns.map(c => `"${c}"`).join(', ')}
           </p>
         )}
-      </div>
-
-      {recentFiles.length > 0 && (
-        <div>
-          <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Recent Files</h2>
-          <div className="space-y-2">
-            {recentFiles.map(entry => (
-              <div
-                key={entry.id ?? `${entry.filename}-${entry.timestamp}`}
-                className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 rounded-lg"
-              >
-                <button
-                  onClick={() => onLoadFromHistory(entry)}
-                  className="flex-1 text-left min-w-0"
-                  title={`Load ${entry.filename}`}
+        {recentFiles.length > 0 && (
+          <div className="mt-4">
+            <p className="text-sm font-semibold text-gray-700 mb-2">Recent Files</p>
+            <div className="space-y-2">
+              {recentFiles.map(entry => (
+                <div
+                  key={entry.id ?? `${entry.filename}-${entry.timestamp}`}
+                  className="flex items-center justify-between p-2 bg-gray-50 border border-gray-200 rounded-lg"
                 >
-                  <div className="text-sm font-medium text-gray-800 truncate">{entry.filename}</div>
-                  <div className="text-xs text-gray-500">{formatRelativeTime(entry.timestamp)}</div>
-                </button>
-                <button
-                  onClick={() => entry.id !== undefined && onDeleteFromHistory(entry.id)}
-                  className="ml-2 text-gray-400 hover:text-red-500 flex-shrink-0"
-                  title="Remove from history"
-                  aria-label="Remove from history"
-                >
-                  <span aria-hidden="true">🗑</span>
-                </button>
-              </div>
-            ))}
+                  <button
+                    onClick={() => onLoadFromHistory(entry)}
+                    className="flex-1 text-left min-w-0"
+                    title={`Load ${entry.filename}`}
+                  >
+                    <div className="text-sm font-medium text-gray-800 truncate">{entry.filename}</div>
+                    <div className="text-xs text-gray-500">{formatRelativeTime(entry.timestamp)}</div>
+                  </button>
+                  <button
+                    onClick={() => entry.id !== undefined && onDeleteFromHistory(entry.id)}
+                    className="ml-2 text-gray-400 hover:text-red-500 flex-shrink-0"
+                    title="Remove from history"
+                    aria-label="Remove from history"
+                  >
+                    <span aria-hidden="true">🗑</span>
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </PanelSection>
 
-      <div>
-        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Column Filter</h2>
+      <PanelSection title="Columns" defaultOpen hint={columnsHint}>
         <div className="space-y-3">
           <div>
             <label htmlFor="columnFilter" className="block text-sm font-medium text-gray-700 mb-1">Filter Columns</label>
@@ -350,11 +360,24 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               </p>
             )}
           </div>
+          <div className="flex items-center justify-end">
+            <button
+              onClick={onToggleColumnGroups}
+              className={`text-xs px-2 py-1 rounded border transition-colors ${showColumnGroups
+                ? 'bg-brand-primary text-white border-brand-primary'
+                : 'bg-white text-gray-600 border-gray-300 hover:border-brand-primary hover:text-brand-primary'
+                }`}
+            >
+              {showColumnGroups ? 'Ungroup' : 'Group'}
+            </button>
+          </div>
+          <div className="space-y-1">
+            {renderColumnList()}
+          </div>
         </div>
-      </div>
+      </PanelSection>
 
-      <div>
-        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Display Options</h2>
+      <PanelSection title="View" defaultOpen>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label htmlFor="filterMode" className="font-semibold text-gray-700">Selection Mode</label>
@@ -457,36 +480,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   className="h-4 w-4 rounded text-brand-primary focus:ring-brand-secondary"
                 />
               </div>
-              <div className="flex items-center justify-between">
-                <label htmlFor="correlationMetric" className="text-sm text-gray-600">Metric</label>
-                <select
-                  id="correlationMetric"
-                  value={correlationMetric}
-                  onChange={(e) => setCorrelationMetric(e.target.value as CorrelationKind)}
-                  className="p-1 border rounded-md shadow-sm text-sm focus:ring-brand-secondary focus:border-brand-secondary"
-                >
-                  <option value="pearson">Pearson (r)</option>
-                  <option value="spearman">Spearman (ρ)</option>
-                </select>
-              </div>
-              <div className="flex items-center space-x-1 pt-1">
-                <button
-                  onClick={onSortByCorrelation}
-                  className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
-                  title="Reorder visible columns by mean absolute correlation against the other visible columns (descending)"
-                >
-                  Sort columns by |r|
-                </button>
-                {canRestoreColumnOrder && (
-                  <button
-                    onClick={onRestoreColumnOrder}
-                    className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
-                    title="Restore the column order from before the sort"
-                  >
-                    Restore order
-                  </button>
-                )}
-              </div>
             </div>
           </div>
           <div>
@@ -505,18 +498,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               className="w-full accent-brand-primary"
             />
           </div>
-          <button
-            onClick={handleDownloadSVG}
-            className="w-full mt-4 px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
-          >
-            <DownloadIcon className="h-5 w-5" />
-            <span>Download SVG</span>
-          </button>
         </div>
-      </div>
+      </PanelSection>
 
-      <div>
-        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Color</h2>
+      <PanelSection title="Color" defaultOpen={colorMode !== 'none'} hint={colorHint}>
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label htmlFor="colorMode" className="font-semibold text-gray-700">Color By</label>
@@ -606,35 +591,39 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             </div>
           )}
         </div>
-      </div>
+      </PanelSection>
 
       {facetSummaries.length > 0 && (
-        <div data-testid="facets-section">
-          <div className="flex items-center justify-between mb-2 border-b pb-2">
-            <h2 className="text-lg font-bold text-brand-dark flex items-center">
-              Facets
-              {activeFacetCount > 0 && (
-                <span
-                  className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold text-white bg-brand-primary rounded-full"
-                  title={`${activeFacetCount} active facet${activeFacetCount > 1 ? 's' : ''}`}
-                  data-testid="active-facet-count"
-                >
-                  {activeFacetCount}
-                </span>
-              )}
-            </h2>
+        <PanelSection
+          title="Facets"
+          defaultOpen={activeFacetCount > 0}
+          hint={facetsHint}
+          testId="facets-section"
+          badge={
+            activeFacetCount > 0 ? (
+              <span
+                className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold text-white bg-brand-primary rounded-full"
+                title={`${activeFacetCount} active facet${activeFacetCount > 1 ? 's' : ''}`}
+                data-testid="active-facet-count"
+              >
+                {activeFacetCount}
+              </span>
+            ) : null
+          }
+        >
+          <div className="flex items-start justify-between mb-2">
+            <p className="text-xs text-gray-500 pr-2">
+              Check values to restrict the plotted rows. Columns with nothing checked show all rows.
+            </p>
             {activeFacetCount > 0 && (
               <button
                 onClick={onClearAllFacets}
-                className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+                className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors flex-shrink-0"
               >
                 Clear all
               </button>
             )}
           </div>
-          <p className="text-xs text-gray-500 mb-2">
-            Check values to restrict the plotted rows. Columns with nothing checked show all rows.
-          </p>
           <div className="space-y-2">
             {facetSummaries.map(summary => {
               const selected = facetSelections.get(summary.column);
@@ -712,43 +701,73 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               );
             })}
           </div>
-        </div>
+        </PanelSection>
       )}
 
-      <div>
-        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Analysis</h2>
-        <button
-          onClick={onAddPCA}
-          className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors"
-          title="Compute PCA over the visible numeric columns and add PC1-PC3 as derived columns"
-        >
-          Add PCA Columns
-        </button>
-        {pcaVariance && pcaVariance.length > 0 && (
-          <p className="text-xs text-gray-500 mt-2">
-            Explained variance:{' '}
-            {pcaVariance.map(pc => `${pc.name} ${(pc.ratio * 100).toFixed(1)}%`).join(', ')}
-          </p>
-        )}
-      </div>
+      <PanelSection title="Analysis" hint={analysisHint}>
+        <div className="space-y-3">
+          <div>
+            <button
+              onClick={onAddPCA}
+              className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors"
+              title="Compute PCA over the visible numeric columns and add PC1-PC3 as derived columns"
+            >
+              Add PCA Columns
+            </button>
+            {pcaVariance && pcaVariance.length > 0 && (
+              <p className="text-xs text-gray-500 mt-2">
+                Explained variance:{' '}
+                {pcaVariance.map(pc => `${pc.name} ${(pc.ratio * 100).toFixed(1)}%`).join(', ')}
+              </p>
+            )}
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700 text-sm">Correlation</span>
+            <div className="mt-1 space-y-1">
+              <div className="flex items-center justify-between">
+                <label htmlFor="correlationMetric" className="text-sm text-gray-600">Metric</label>
+                <select
+                  id="correlationMetric"
+                  value={correlationMetric}
+                  onChange={(e) => setCorrelationMetric(e.target.value as CorrelationKind)}
+                  className="p-1 border rounded-md shadow-sm text-sm focus:ring-brand-secondary focus:border-brand-secondary"
+                >
+                  <option value="pearson">Pearson (r)</option>
+                  <option value="spearman">Spearman (ρ)</option>
+                </select>
+              </div>
+              <div className="flex items-center space-x-1 pt-1">
+                <button
+                  onClick={onSortByCorrelation}
+                  className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+                  title="Reorder visible columns by mean absolute correlation against the other visible columns (descending)"
+                >
+                  Sort columns by |r|
+                </button>
+                {canRestoreColumnOrder && (
+                  <button
+                    onClick={onRestoreColumnOrder}
+                    className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+                    title="Restore the column order from before the sort"
+                  >
+                    Restore order
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </PanelSection>
 
-      <div>
-        <div className="flex items-center justify-between mb-2 border-b pb-2">
-          <h2 className="text-lg font-bold text-brand-dark">Columns</h2>
-          <button
-            onClick={onToggleColumnGroups}
-            className={`text-xs px-2 py-1 rounded border transition-colors ${showColumnGroups
-              ? 'bg-brand-primary text-white border-brand-primary'
-              : 'bg-white text-gray-600 border-gray-300 hover:border-brand-primary hover:text-brand-primary'
-              }`}
-          >
-            {showColumnGroups ? 'Ungroup' : 'Group'}
-          </button>
-        </div>
-        <div className="space-y-1">
-          {renderColumnList()}
-        </div>
-      </div>
+      <PanelSection title="Export">
+        <button
+          onClick={handleDownloadSVG}
+          className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
+        >
+          <DownloadIcon className="h-5 w-5" />
+          <span>Download SVG</span>
+        </button>
+      </PanelSection>
     </div>
   );
 };
