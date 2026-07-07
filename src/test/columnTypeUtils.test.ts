@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import Papa from 'papaparse';
-import { detectColumnTypes } from '../utils/columnTypeUtils';
+import { detectColumnTypes, buildEmptyColumnsNotice } from '../utils/columnTypeUtils';
 import { cellValueToNumber, isFiniteCellValue } from '../utils/cellValueUtils';
 
 describe('detectColumnTypes', () => {
@@ -38,6 +38,40 @@ describe('detectColumnTypes', () => {
     expect(detectColumnTypes([])).toEqual({ numericColumns: [], stringColumns: [], emptyColumns: [] });
     const detected = detectColumnTypes([{ __id: 0, a: 1 }]);
     expect(detected.numericColumns).toEqual(['a']);
+  });
+});
+
+describe('buildEmptyColumnsNotice', () => {
+  it('returns null when there are no empty columns', () => {
+    expect(buildEmptyColumnsNotice([])).toBeNull();
+  });
+
+  it('uses singular phrasing for one column', () => {
+    expect(buildEmptyColumnsNotice(['foo'])).toBe('1 empty column hidden: foo');
+  });
+
+  it('lists multiple column names', () => {
+    expect(buildEmptyColumnsNotice(['foo', 'bar'])).toBe(
+      '2 empty columns hidden: foo, bar'
+    );
+  });
+
+  it('names up to five columns without truncation', () => {
+    expect(buildEmptyColumnsNotice(['a', 'b', 'c', 'd', 'e'])).toBe(
+      '5 empty columns hidden: a, b, c, d, e'
+    );
+  });
+
+  it('truncates the name list past five columns', () => {
+    expect(buildEmptyColumnsNotice(['a', 'b', 'c', 'd', 'e', 'f', 'g'])).toBe(
+      '7 empty columns hidden: a, b, c, d, e and 2 more'
+    );
+  });
+
+  it('respects a custom name cap', () => {
+    expect(buildEmptyColumnsNotice(['a', 'b', 'c'], 2)).toBe(
+      '3 empty columns hidden: a, b and 1 more'
+    );
   });
 });
 
