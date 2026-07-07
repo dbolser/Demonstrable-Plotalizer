@@ -9,6 +9,11 @@ import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
 import { MISSING_COLOR, MISSING_SLOT } from '../src/utils/colorUtils';
 import type { ColorState } from '../src/utils/colorUtils';
 import { buildRenderKey } from '../src/utils/renderKeyUtils';
+import {
+  getStackConfig,
+  computeStackedBinCounts,
+  buildStackSegments,
+} from '../src/utils/histogramStackUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -823,26 +828,76 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       histCellsBottom.each(function (i_visible) {
         const i_original = visibleIndexToOriginalIndex.get(i_visible)!;
         const column = columns[i_original];
-        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
 
         const domain = xScales[i_visible].domain();
         const minDomain = Math.min(domain[0], domain[1]);
         const maxDomain = Math.max(domain[0], domain[1]);
 
-        // Create bin generator with uniform log bins if requested and using log scale
-        let binGenerator;
+        // Uniform bins in log space if requested and using log scale
+        let thresholds: number | number[] = 20;
         if (useUniformLogBins && column.scale === 'log') {
-          // Create uniform bins in log space
           const logMin = Math.log10(Math.max(minDomain, 1e-10));
           const logMax = Math.log10(maxDomain);
           const numBins = 20;
           const logStep = (logMax - logMin) / numBins;
-          const thresholds = Array.from({ length: numBins + 1 }, (_, i) => Math.pow(10, logMin + i * logStep));
-          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(thresholds);
-        } else {
-          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(20);
+          thresholds = Array.from({ length: numBins + 1 }, (_, i) => Math.pow(10, logMin + i * logStep));
         }
+
+        const g = d3.select(this);
+        const binX0 = (d: { x0?: number }) => xScales[i_visible](d.x0!)! + 1;
+        const binWidth = (d: { x0?: number, x1?: number }) =>
+          Math.max(0, xScales[i_visible](d.x1!)! - xScales[i_visible](d.x0!)! - 1);
+
+        if (colorState) {
+          // Issue #40: with a color mode active, each bar becomes a stacked
+          // bar segmented by point color (categories, or ~12 gradient
+          // buckets for rainbow). Bins keep row identity so each row lands
+          // in its color stack.
+          const rowBinGenBase = d3.bin<DataPoint, number>()
+            .value(d => +d[column.name])
+            .domain([minDomain, maxDomain]);
+          const rowBinGen = Array.isArray(thresholds)
+            ? rowBinGenBase.thresholds(thresholds)
+            : rowBinGenBase.thresholds(thresholds);
+          const rowBins = rowBinGen(filteredData.filter(d => isFinite(+d[column.name])));
+
+          const config = getStackConfig(colorState);
+          const { total, selected } = computeStackedBinCounts(rowBins, colorState, config, selectedIds);
+          const binTotals = total.map(stacks => stacks.reduce((a, b) => a + b, 0));
+          const yHist = d3.scaleLinear().domain([0, d3.max(binTotals) || 1]).range([size - padding / 2, padding / 2]);
+          const hasSelection = selectedIds.size > 0;
+
+          // Selection readability: keep the stacking but dim the full-data
+          // segments; the selected rows are re-stacked opaquely from the
+          // baseline on top (mirrors the classic gray/blue overlay).
+          g.selectAll("rect.stack-total").data(buildStackSegments(total, config.stackColors)).join("rect")
+            .attr("class", "stack-total")
+            .attr("x", seg => binX0(rowBins[seg.binIndex]))
+            .attr("width", seg => binWidth(rowBins[seg.binIndex]))
+            .attr("y", seg => yHist(seg.end)!)
+            .attr("height", seg => Math.max(0, yHist(seg.start)! - yHist(seg.end)!))
+            .attr("fill", seg => seg.color)
+            .attr("fill-opacity", hasSelection ? 0.25 : 0.9);
+
+          if (hasSelection) {
+            g.selectAll("rect.stack-selected").data(buildStackSegments(selected, config.stackColors)).join("rect")
+              .attr("class", "stack-selected")
+              .attr("x", seg => binX0(rowBins[seg.binIndex]))
+              .attr("width", seg => binWidth(rowBins[seg.binIndex]))
+              .attr("y", seg => yHist(seg.end)!)
+              .attr("height", seg => Math.max(0, yHist(seg.start)! - yHist(seg.end)!))
+              .attr("fill", seg => seg.color);
+          }
+          return;
+        }
+
+        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
+        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
+
+        const binGeneratorBase = d3.bin().domain([minDomain, maxDomain]);
+        const binGenerator = Array.isArray(thresholds)
+          ? binGeneratorBase.thresholds(thresholds)
+          : binGeneratorBase.thresholds(thresholds);
 
         const allBins = binGenerator(allValues);
         const selectedBins = binGenerator(selectedValues);
@@ -856,17 +911,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
         const yHist = d3.scaleLinear().domain([0, d3.max(combinedBins, d => d.totalLength) || 1]).range([size - padding / 2, padding / 2]);
 
-        const g = d3.select(this);
         g.selectAll("rect.total").data(combinedBins).join("rect").attr("class", "total")
-          .attr("x", d => xScales[i_visible](d.x0)! + 1)
-          .attr("width", d => Math.max(0, xScales[i_visible](d.x1)! - xScales[i_visible](d.x0)! - 1))
+          .attr("x", d => binX0(d))
+          .attr("width", d => binWidth(d))
           .attr("y", d => yHist(d.totalLength)!)
           .attr("height", d => size - padding / 2 - yHist(d.totalLength)!)
           .attr("fill", selectedIds.size > 0 ? "#ccc" : "#60a5fa");
 
         g.selectAll("rect.selected").data(combinedBins).join("rect").attr("class", "selected")
-          .attr("x", d => xScales[i_visible](d.x0)! + 1)
-          .attr("width", d => Math.max(0, xScales[i_visible](d.x1)! - xScales[i_visible](d.x0)! - 1))
+          .attr("x", d => binX0(d))
+          .attr("width", d => binWidth(d))
           .attr("y", d => yHist(d.selectedLength)!)
           .attr("height", d => size - padding / 2 - yHist(d.selectedLength)!)
           .attr("fill", "#1e40af");
@@ -946,26 +1000,71 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       histCellsRight.each(function (j_visible) {
         const j_original = visibleIndexToOriginalIndex.get(j_visible)!;
         const column = columns[j_original];
-        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
 
         const domain = yScales[j_visible].domain();
         const minDomain = Math.min(domain[0], domain[1]);
         const maxDomain = Math.max(domain[0], domain[1]);
 
-        // Create bin generator with uniform log bins if requested and using log scale
-        let binGenerator;
+        // Uniform bins in log space if requested and using log scale
+        let thresholds: number | number[] = 20;
         if (useUniformLogBins && column.scale === 'log') {
-          // Create uniform bins in log space
           const logMin = Math.log10(Math.max(minDomain, 1e-10));
           const logMax = Math.log10(maxDomain);
           const numBins = 20;
           const logStep = (logMax - logMin) / numBins;
-          const thresholds = Array.from({ length: numBins + 1 }, (_, i) => Math.pow(10, logMin + i * logStep));
-          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(thresholds);
-        } else {
-          binGenerator = d3.bin().domain([minDomain, maxDomain]).thresholds(20);
+          thresholds = Array.from({ length: numBins + 1 }, (_, i) => Math.pow(10, logMin + i * logStep));
         }
+
+        const g = d3.select(this);
+        const binY0 = (d: { x1?: number }) => yScales[j_visible](d.x1!)! + 1;
+        const binHeight = (d: { x0?: number, x1?: number }) =>
+          Math.max(0, yScales[j_visible](d.x0!)! - yScales[j_visible](d.x1!)! - 1);
+
+        if (colorState) {
+          // Issue #40: stacked-by-color bars (horizontal); see the bottom
+          // histogram block for the full rationale.
+          const rowBinGenBase = d3.bin<DataPoint, number>()
+            .value(d => +d[column.name])
+            .domain([minDomain, maxDomain]);
+          const rowBinGen = Array.isArray(thresholds)
+            ? rowBinGenBase.thresholds(thresholds)
+            : rowBinGenBase.thresholds(thresholds);
+          const rowBins = rowBinGen(filteredData.filter(d => isFinite(+d[column.name])));
+
+          const config = getStackConfig(colorState);
+          const { total, selected } = computeStackedBinCounts(rowBins, colorState, config, selectedIds);
+          const binTotals = total.map(stacks => stacks.reduce((a, b) => a + b, 0));
+          const xHist = d3.scaleLinear().domain([0, d3.max(binTotals) || 1]).range([padding / 2, size - padding / 2]);
+          const hasSelection = selectedIds.size > 0;
+
+          g.selectAll("rect.stack-total").data(buildStackSegments(total, config.stackColors)).join("rect")
+            .attr("class", "stack-total")
+            .attr("y", seg => binY0(rowBins[seg.binIndex]))
+            .attr("height", seg => binHeight(rowBins[seg.binIndex]))
+            .attr("x", seg => xHist(seg.start)!)
+            .attr("width", seg => Math.max(0, xHist(seg.end)! - xHist(seg.start)!))
+            .attr("fill", seg => seg.color)
+            .attr("fill-opacity", hasSelection ? 0.25 : 0.9);
+
+          if (hasSelection) {
+            g.selectAll("rect.stack-selected").data(buildStackSegments(selected, config.stackColors)).join("rect")
+              .attr("class", "stack-selected")
+              .attr("y", seg => binY0(rowBins[seg.binIndex]))
+              .attr("height", seg => binHeight(rowBins[seg.binIndex]))
+              .attr("x", seg => xHist(seg.start)!)
+              .attr("width", seg => Math.max(0, xHist(seg.end)! - xHist(seg.start)!))
+              .attr("fill", seg => seg.color);
+          }
+          return;
+        }
+
+        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
+        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
+
+        const binGeneratorBase = d3.bin().domain([minDomain, maxDomain]);
+        const binGenerator = Array.isArray(thresholds)
+          ? binGeneratorBase.thresholds(thresholds)
+          : binGeneratorBase.thresholds(thresholds);
 
         const allBins = binGenerator(allValues);
         const selectedBins = binGenerator(selectedValues);
@@ -978,18 +1077,17 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         }));
 
         const xHist = d3.scaleLinear().domain([0, d3.max(combinedBins, d => d.totalLength) || 1]).range([padding / 2, size - padding / 2]);
-        const g = d3.select(this);
 
         g.selectAll("rect.total").data(combinedBins).join("rect").attr("class", "total")
-          .attr("y", d => yScales[j_visible](d.x1)! + 1)
-          .attr("height", d => Math.max(0, yScales[j_visible](d.x0)! - yScales[j_visible](d.x1)! - 1))
+          .attr("y", d => binY0(d))
+          .attr("height", d => binHeight(d))
           .attr("x", padding / 2)
           .attr("width", d => xHist(d.totalLength)! - padding / 2)
           .attr("fill", selectedIds.size > 0 ? "#ccc" : "#60a5fa");
 
         g.selectAll("rect.selected").data(combinedBins).join("rect").attr("class", "selected")
-          .attr("y", d => yScales[j_visible](d.x1)! + 1)
-          .attr("height", d => Math.max(0, yScales[j_visible](d.x0)! - yScales[j_visible](d.x1)! - 1))
+          .attr("y", d => binY0(d))
+          .attr("height", d => binHeight(d))
           .attr("x", padding / 2)
           .attr("width", d => xHist(d.selectedLength)! - padding / 2)
           .attr("fill", "#1e40af");
