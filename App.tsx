@@ -15,6 +15,8 @@ import { saveFile, getHistory, deleteEntry } from './src/utils/fileHistory';
 import type { FileHistoryEntry } from './src/utils/fileHistory';
 import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
 import { UrlInput } from './components/UrlInput';
+import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
+import type { PCAVarianceEntry } from './components/ControlPanel';
 
 const MAX_INITIAL_RENDER_POINTS = 15_000;
 
@@ -38,6 +40,7 @@ const App: React.FC = () => {
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
   const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
   const [isUrlLoading, setIsUrlLoading] = useState<boolean>(false);
+  const [pcaVariance, setPcaVariance] = useState<PCAVarianceEntry[] | null>(null);
 
   // Monotonic id for data loads: any newer load invalidates in-flight remote
   // fetches so a slow earlier response can't overwrite the dataset the user
@@ -133,6 +136,7 @@ const App: React.FC = () => {
 
     setColumns(numericColumns);
     setColumnFilter('');
+    setPcaVariance(null);
     setBrushSelection(null);
     setShowColumnGroups(false);
     setColumnGroups(new Map());
@@ -293,6 +297,42 @@ const App: React.FC = () => {
     setIsRecalculating(false);
   }, []);
 
+  // Issue #38: PCA over the currently visible numeric columns. PC1..PC3 are
+  // appended as derived columns; clicking again recomputes and replaces them.
+  // Uses displayColumns (same set the matrix renders) so an active column
+  // filter also constrains which columns feed the PCA fit.
+  const handleAddPCA = useCallback(() => {
+    const pcNameSet = new Set<string>(PCA_COLUMN_NAMES);
+    const inputColumnNames = displayColumns
+      .filter(col => col.visible && !pcNameSet.has(col.name))
+      .map(col => col.name);
+
+    const result = computePCA(data, inputColumnNames);
+    if (!result) {
+      alert('PCA needs at least 2 visible numeric columns with variation and 2 complete rows.');
+      return;
+    }
+
+    const numComponents = Math.min(PCA_COLUMN_NAMES.length, result.columnNames.length);
+    const scores = projectPCA(data, result, numComponents);
+    const pcNames = PCA_COLUMN_NAMES.slice(0, numComponents);
+
+    setData(data.map((row, i) => {
+      const next: DataPoint = { ...row };
+      PCA_COLUMN_NAMES.forEach(name => { delete next[name]; }); // drop stale PCs
+      pcNames.forEach((name, k) => { next[name] = scores[k][i]; });
+      return next;
+    }));
+    setColumns(prev => [
+      ...prev.filter(col => !pcNameSet.has(col.name)),
+      ...pcNames.map(name => ({ name, scale: 'linear' as ScaleType, visible: true })),
+    ]);
+    setPcaVariance(pcNames.map((name, k) => ({
+      name,
+      ratio: result.explainedVarianceRatios[k],
+    })));
+  }, [data, displayColumns]);
+
   // Compute data to show in the table (only selected points if there's a selection)
   const tableData = brushSelection?.selectedIds
     ? data.filter(row => brushSelection.selectedIds.has(row.__id))
@@ -435,6 +475,8 @@ const App: React.FC = () => {
               recentFiles={recentFiles}
               onLoadFromHistory={handleLoadFromHistory}
               onDeleteFromHistory={handleDeleteFromHistory}
+              onAddPCA={handleAddPCA}
+              pcaVariance={pcaVariance}
             />
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
