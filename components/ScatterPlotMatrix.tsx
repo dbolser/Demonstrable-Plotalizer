@@ -6,7 +6,7 @@ import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
-import { createZoomGestureController, isZoomWheelEvent } from '../src/utils/zoomUtils';
+import { createZoomGestureController, isZoomWheelEvent, normalizeWheelDelta } from '../src/utils/zoomUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -189,6 +189,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     const handleWheel = (event: WheelEvent) => {
+      // Zoom is disabled without a commit callback — leave the browser's
+      // default Ctrl/Cmd+wheel behavior (page zoom) alone in that case.
+      if (!onCellSizeChangeRef.current) return;
       // Plain wheel keeps normal scrolling; only Ctrl/Cmd+wheel zooms.
       if (!isZoomWheelEvent(event)) return;
       event.preventDefault(); // stop browser page-zoom
@@ -197,7 +200,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const rect = el.getBoundingClientRect();
         gestureOrigin = `${event.clientX - rect.left}px ${event.clientY - rect.top}px`;
       }
-      controller.wheel(event.deltaY);
+      // deltaY may be in lines/pages depending on the device (deltaMode).
+      controller.wheel(normalizeWheelDelta(event.deltaY, event.deltaMode));
     };
 
     // Native listener: React attaches wheel handlers passively, which would

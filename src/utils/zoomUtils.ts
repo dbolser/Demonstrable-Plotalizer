@@ -23,6 +23,22 @@ const WHEEL_ZOOM_SENSITIVITY = 0.002;
 export const clampCellSize = (size: number): number =>
   Math.min(MAX_CELL_SIZE, Math.max(MIN_CELL_SIZE, Math.round(size)));
 
+/** Pixel equivalents for non-pixel WheelEvent.deltaMode values. */
+const LINE_HEIGHT_PX = 16; // DOM_DELTA_LINE
+const PAGE_HEIGHT_PX = 800; // DOM_DELTA_PAGE
+
+/**
+ * Normalize a wheel delta to pixels. Some browsers/devices (notably Firefox
+ * with a traditional mouse wheel) report deltaY in lines (deltaMode 1) or
+ * pages (deltaMode 2); the pixel-tuned sensitivity would make those gestures
+ * nearly inert without conversion.
+ */
+export const normalizeWheelDelta = (deltaY: number, deltaMode: number): number => {
+  if (deltaMode === 1) return deltaY * LINE_HEIGHT_PX;
+  if (deltaMode === 2) return deltaY * PAGE_HEIGHT_PX;
+  return deltaY;
+};
+
 /**
  * Convert a wheel deltaY into a multiplicative zoom factor.
  * Scrolling up (negative deltaY) zooms in (> 1), down zooms out (< 1).

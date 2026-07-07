@@ -5,7 +5,7 @@ import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { ScatterPlotMatrix } from '../../components/ScatterPlotMatrix';
 import type { Column, DataPoint } from '../../types';
-import { accumulateWheelZoom, commitZoom } from '../utils/zoomUtils';
+import { accumulateWheelZoom, commitZoom, normalizeWheelDelta } from '../utils/zoomUtils';
 
 const makeProps = (overrides: Partial<React.ComponentProps<typeof ScatterPlotMatrix>> = {}) => {
     const data: DataPoint[] = Array.from({ length: 20 }, (_, i) => ({
@@ -66,6 +66,25 @@ describe('fluid zoom gesture (issue #57)', () => {
         expect(root.style.transform).toBe('');
         await new Promise(resolve => setTimeout(resolve, 300));
         expect(onCellSizeChange).not.toHaveBeenCalled();
+    });
+
+    it('leaves Ctrl+wheel alone (browser page-zoom) when onCellSizeChange is not provided', () => {
+        const { root } = renderMatrix(); // no onCellSizeChange prop
+
+        const notPrevented = dispatchWheel(root, { deltaY: -100, ctrlKey: true });
+
+        expect(notPrevented).toBe(true); // default browser behavior preserved
+        expect(root.style.transform).toBe('');
+    });
+
+    it('normalizes line-mode wheel deltas (deltaMode 1) so zoom sensitivity matches pixel mode', () => {
+        const { root } = renderMatrix({ onCellSizeChange: vi.fn() });
+
+        // Firefox-style mouse wheel notch: 3 lines, not 3 pixels.
+        dispatchWheel(root, { deltaY: -3, deltaMode: 1, ctrlKey: true });
+
+        const expectedScale = accumulateWheelZoom(1, normalizeWheelDelta(-3, 1), 150);
+        expect(root.style.transform).toBe(`scale(${expectedScale})`);
     });
 
     it('Ctrl+wheel applies a CSS scale preview and prevents browser page-zoom', () => {

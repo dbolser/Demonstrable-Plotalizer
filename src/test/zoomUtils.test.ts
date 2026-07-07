@@ -5,6 +5,7 @@ import {
   ZOOM_COMMIT_DEBOUNCE_MS,
   ZOOM_STEP_FACTOR,
   clampCellSize,
+  normalizeWheelDelta,
   wheelDeltaToScaleFactor,
   clampScaleForCellSize,
   accumulateWheelZoom,
@@ -26,6 +27,23 @@ describe('zoomUtils: pure math', () => {
       expect(clampCellSize(10_000)).toBe(MAX_CELL_SIZE);
       expect(clampCellSize(MIN_CELL_SIZE)).toBe(MIN_CELL_SIZE);
       expect(clampCellSize(MAX_CELL_SIZE)).toBe(MAX_CELL_SIZE);
+    });
+  });
+
+  describe('normalizeWheelDelta', () => {
+    it('passes pixel-mode deltas (deltaMode 0) through unchanged', () => {
+      expect(normalizeWheelDelta(-100, 0)).toBe(-100);
+      expect(normalizeWheelDelta(42, 0)).toBe(42);
+    });
+
+    it('converts line-mode deltas (deltaMode 1, e.g. Firefox mouse wheel) to pixels', () => {
+      expect(normalizeWheelDelta(-3, 1)).toBe(-48);
+      expect(normalizeWheelDelta(3, 1)).toBe(48);
+    });
+
+    it('converts page-mode deltas (deltaMode 2) to pixels', () => {
+      expect(normalizeWheelDelta(-1, 2)).toBe(-800);
+      expect(normalizeWheelDelta(1, 2)).toBe(800);
     });
   });
 

@@ -322,6 +322,8 @@ const App: React.FC = () => {
   }, []);
 
   const handleMatrixKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Don't hijack browser shortcuts (e.g. Ctrl/Cmd +/- page zoom) or Alt combos.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
     if (e.key === '+' || e.key === '=') {
       e.preventDefault();
       handleZoomStep(1);
@@ -542,7 +544,7 @@ const App: React.FC = () => {
             )}
 
             <div
-              className="p-4 overflow-auto focus:outline-none"
+              className="p-4 overflow-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
               style={{
                 flex: tableData.length > 0 ? '1 1 auto' : '1 1 0',
                 minHeight: 0
