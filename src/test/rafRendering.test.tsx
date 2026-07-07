@@ -48,18 +48,27 @@ describe('RAF-chunked canvas rendering', () => {
 
     it('cancels cleanly on unmount without stale callbacks', async () => {
         const onRenderComplete = vi.fn();
-        const { unmount } = render(
-            <DndProvider backend={HTML5Backend}>
-                <ScatterPlotMatrix {...makeProps({ onRenderComplete })} />
-            </DndProvider>
-        );
+        const cafSpy = vi.spyOn(window, 'cancelAnimationFrame');
+        try {
+            const { unmount } = render(
+                <DndProvider backend={HTML5Backend}>
+                    <ScatterPlotMatrix {...makeProps({ onRenderComplete })} />
+                </DndProvider>
+            );
 
-        // Unmount immediately, before any animation frame can fire.
-        unmount();
+            // Unmount immediately, before any animation frame can fire.
+            unmount();
 
-        // Give any (incorrectly) leaked frames a chance to run.
-        await new Promise(resolve => setTimeout(resolve, 50));
-        expect(onRenderComplete).not.toHaveBeenCalled();
+            // The effect cleanup must cancel its pending frame deterministically.
+            expect(cafSpy).toHaveBeenCalled();
+
+            // Secondary check: give any (incorrectly) leaked frames a chance
+            // to run and assert the stale completion never fires.
+            await new Promise(resolve => setTimeout(resolve, 50));
+            expect(onRenderComplete).not.toHaveBeenCalled();
+        } finally {
+            cafSpy.mockRestore();
+        }
     });
 
     it('reports progress for multi-frame renders', async () => {

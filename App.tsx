@@ -35,6 +35,10 @@ const App: React.FC = () => {
   const [showColumnGroups, setShowColumnGroups] = useState<boolean>(false);
   const [columnGroups, setColumnGroups] = useState<Map<string, string[]>>(new Map());
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
+  // Monotonic id for CSV load requests. Worker parsing is asynchronous, so a
+  // slow parse started earlier can complete *after* a newer one; results are
+  // applied only if they belong to the most recent request.
+  const activeLoadIdRef = useRef<number>(0);
 
   const [tooltip, setTooltip] = useState<{ visible: boolean; content: string; x: number; y: number }>({
     visible: false,
@@ -142,13 +146,22 @@ const App: React.FC = () => {
     // (e.g. jsdom tests), so defer to the next frame to let the pill paint
     // in that case too.
     setIsRecalculating(true);
+    const loadId = ++activeLoadIdRef.current;
     requestAnimationFrame(() => {
+      // A newer load superseded this one before parsing even started.
+      if (loadId !== activeLoadIdRef.current) return;
       Papa.parse<DataPoint>(csvText, {
         header: true,
         dynamicTyping: true,
         skipEmptyLines: true,
         worker: true,
-        complete: applyParseResult,
+        complete: (result) => {
+          // Ignore stale worker completions from superseded loads so an
+          // older, slower parse can't overwrite a newer dataset (or clear
+          // the newer load's indicator).
+          if (loadId !== activeLoadIdRef.current) return;
+          applyParseResult(result);
+        },
       });
     });
   }, [applyParseResult]);

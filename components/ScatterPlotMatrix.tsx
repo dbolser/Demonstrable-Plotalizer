@@ -870,10 +870,12 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     const totalTasks = paintTasks.length;
     let tasksDone = 0;
+    let framesUsed = 0;
 
     const paintFrame = () => {
       rafId = null;
       if (cancelled) return;
+      framesUsed++;
 
       const frameStart = performance.now();
       let paintedThisFrame = 0;
@@ -898,9 +900,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         paintedThisFrame++;
       }
 
-      // Only stream progress for multi-frame renders; single-frame paints
-      // finish before the indicator could usefully update.
-      if (totalTasks > CELLS_PER_FRAME) {
+      // Stream progress once a render actually spans more than one frame —
+      // whether because there are many cells or because a few point-heavy
+      // cells blow the frame budget. Single-frame paints finish before the
+      // indicator could usefully update, so they stay silent.
+      if (framesUsed > 1 || tasksDone < totalTasks) {
         onRenderProgress?.(tasksDone, totalTasks);
       }
 
