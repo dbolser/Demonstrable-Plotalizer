@@ -1,4 +1,5 @@
 import '@testing-library/jest-dom';
+import { vi } from 'vitest';
 
 // Mock canvas and image operations for testing
 HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
@@ -8,7 +9,7 @@ HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
   fill: vi.fn(),
   beginPath: vi.fn(),
   drawImage: vi.fn(),
-}));
+})) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
 HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/png;base64,mock');
 

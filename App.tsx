@@ -13,6 +13,10 @@ import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 import { detectColumnGroups } from './src/utils/groupUtils';
 import { saveFile, getHistory, deleteEntry } from './src/utils/fileHistory';
 import type { FileHistoryEntry } from './src/utils/fileHistory';
+import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
+import { UrlInput } from './components/UrlInput';
+import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
+import type { PCAVarianceEntry } from './components/ControlPanel';
 
 const MAX_INITIAL_RENDER_POINTS = 15_000;
 
@@ -35,10 +39,17 @@ const App: React.FC = () => {
   const [showColumnGroups, setShowColumnGroups] = useState<boolean>(false);
   const [columnGroups, setColumnGroups] = useState<Map<string, string[]>>(new Map());
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
-  // Monotonic id for CSV load requests. Worker parsing is asynchronous, so a
-  // slow parse started earlier can complete *after* a newer one; results are
-  // applied only if they belong to the most recent request.
-  const activeLoadIdRef = useRef<number>(0);
+  const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
+  const [isUrlLoading, setIsUrlLoading] = useState<boolean>(false);
+  const [pcaVariance, setPcaVariance] = useState<PCAVarianceEntry[] | null>(null);
+
+  // Monotonic id for data loads. A single counter guards every async stage:
+  // remote fetches (URL/sample) capture the id before awaiting and drop stale
+  // responses, and worker-based CSV parsing captures the id before the RAF
+  // defer / Papa.parse call and drops stale completions. Any newer load bumps
+  // the counter, so a slow earlier fetch or parse can never overwrite the
+  // dataset the user most recently chose (or clear its loading indicator).
+  const loadRequestIdRef = useRef(0);
 
   const [tooltip, setTooltip] = useState<{ visible: boolean; content: string; x: number; y: number }>({
     visible: false,
@@ -127,6 +138,7 @@ const App: React.FC = () => {
 
     setColumns(numericColumns);
     setColumnFilter('');
+    setPcaVariance(null);
     setBrushSelection(null);
     setShowColumnGroups(false);
     setColumnGroups(new Map());
@@ -139,6 +151,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleDataLoaded = useCallback((csvText: string) => {
+    // A new load supersedes any in-flight remote fetch or worker parse.
+    const loadId = ++loadRequestIdRef.current;
+    setIsUrlLoading(false);
+    setUrlLoadError(null);
     // Show the indicator first; parsing happens in a Web Worker (PapaParse
     // worker: true) so the main thread stays free to paint the
     // "Recalculating…" pill and keep the UI responsive. PapaParse silently
@@ -146,10 +162,9 @@ const App: React.FC = () => {
     // (e.g. jsdom tests), so defer to the next frame to let the pill paint
     // in that case too.
     setIsRecalculating(true);
-    const loadId = ++activeLoadIdRef.current;
     requestAnimationFrame(() => {
       // A newer load superseded this one before parsing even started.
-      if (loadId !== activeLoadIdRef.current) return;
+      if (loadId !== loadRequestIdRef.current) return;
       Papa.parse<DataPoint>(csvText, {
         header: true,
         dynamicTyping: true,
@@ -159,7 +174,7 @@ const App: React.FC = () => {
           // Ignore stale worker completions from superseded loads so an
           // older, slower parse can't overwrite a newer dataset (or clear
           // the newer load's indicator).
-          if (loadId !== activeLoadIdRef.current) return;
+          if (loadId !== loadRequestIdRef.current) return;
           applyParseResult(result);
         },
       });
@@ -167,6 +182,7 @@ const App: React.FC = () => {
   }, [applyParseResult]);
 
   const loadSampleData = useCallback(() => {
+    const requestId = ++loadRequestIdRef.current;
     const sampleDataUrl = `${import.meta.env.BASE_URL}data/sample.csv`;
     fetch(sampleDataUrl)
       .then(response => {
@@ -174,17 +190,14 @@ const App: React.FC = () => {
         return response.text();
       })
       .then(csvText => {
+        // Ignore this response if a newer load started in the meantime
+        if (loadRequestIdRef.current !== requestId) return;
         handleDataLoaded(csvText);
       })
       .catch(error => {
         console.error('Error loading sample data:', error);
       });
   }, [handleDataLoaded]);
-
-  useEffect(() => {
-    loadSampleData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // File upload handler that also saves to history
   const handleFileUpload = useCallback(async (csvText: string, filename: string) => {
@@ -197,6 +210,42 @@ const App: React.FC = () => {
       console.warn('Could not save to history:', err);
     }
   }, [handleDataLoaded]);
+
+  // Load CSV/TSV from a remote URL; successful loads are recorded in the
+  // file history with the source URL as the name (issue #42).
+  const handleLoadFromUrl = useCallback(async (url: string) => {
+    const requestId = ++loadRequestIdRef.current;
+    setUrlLoadError(null);
+    setIsUrlLoading(true);
+    setIsRecalculating(true);
+    try {
+      const csvText = await fetchCsvFromUrl(url);
+      // Ignore this response if a newer load started in the meantime
+      if (loadRequestIdRef.current !== requestId) return;
+      await handleFileUpload(csvText, url);
+    } catch (err) {
+      // A newer load owns the loading/error state now; don't clobber it
+      if (loadRequestIdRef.current !== requestId) return;
+      setIsUrlLoading(false);
+      setIsRecalculating(false);
+      setUrlLoadError(err instanceof Error ? err.message : `Failed to load data from "${url}".`);
+    }
+  }, [handleFileUpload]);
+
+  // On mount: honour a ?data=<url> query param, otherwise load the sample
+  // data. The ref guard keeps React StrictMode's double-invoked effects (and
+  // any dependency-identity churn) from kicking off a duplicate fetch.
+  const didInitialLoadRef = useRef(false);
+  useEffect(() => {
+    if (didInitialLoadRef.current) return;
+    didInitialLoadRef.current = true;
+    const dataUrl = getDataUrlFromQuery(window.location.search);
+    if (dataUrl) {
+      handleLoadFromUrl(dataUrl);
+    } else {
+      loadSampleData();
+    }
+  }, [handleLoadFromUrl, loadSampleData]);
 
   const handleLoadFromHistory = useCallback((entry: FileHistoryEntry) => {
     handleDataLoaded(entry.csvText);
@@ -273,6 +322,42 @@ const App: React.FC = () => {
     setRenderProgress(total > 0 ? { done, total } : null);
   }, []);
 
+  // Issue #38: PCA over the currently visible numeric columns. PC1..PC3 are
+  // appended as derived columns; clicking again recomputes and replaces them.
+  // Uses displayColumns (same set the matrix renders) so an active column
+  // filter also constrains which columns feed the PCA fit.
+  const handleAddPCA = useCallback(() => {
+    const pcNameSet = new Set<string>(PCA_COLUMN_NAMES);
+    const inputColumnNames = displayColumns
+      .filter(col => col.visible && !pcNameSet.has(col.name))
+      .map(col => col.name);
+
+    const result = computePCA(data, inputColumnNames);
+    if (!result) {
+      alert('PCA needs at least 2 visible numeric columns with variation and 2 complete rows.');
+      return;
+    }
+
+    const numComponents = Math.min(PCA_COLUMN_NAMES.length, result.columnNames.length);
+    const scores = projectPCA(data, result, numComponents);
+    const pcNames = PCA_COLUMN_NAMES.slice(0, numComponents);
+
+    setData(data.map((row, i) => {
+      const next: DataPoint = { ...row };
+      PCA_COLUMN_NAMES.forEach(name => { delete next[name]; }); // drop stale PCs
+      pcNames.forEach((name, k) => { next[name] = scores[k][i]; });
+      return next;
+    }));
+    setColumns(prev => [
+      ...prev.filter(col => !pcNameSet.has(col.name)),
+      ...pcNames.map(name => ({ name, scale: 'linear' as ScaleType, visible: true })),
+    ]);
+    setPcaVariance(pcNames.map((name, k) => ({
+      name,
+      ratio: result.explainedVarianceRatios[k],
+    })));
+  }, [data, displayColumns]);
+
   // Compute data to show in the table (only selected points if there's a selection).
   // Memoized so per-frame render-progress updates don't re-filter large datasets.
   const tableData = useMemo(
@@ -328,6 +413,20 @@ const App: React.FC = () => {
     </div>
   );
 
+  // URL load error banner — visible in both empty and main views
+  const urlErrorBanner = urlLoadError && (
+    <div role="alert" className="mx-4 mt-2 px-4 py-2 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between text-sm text-red-800">
+      <span>{urlLoadError}</span>
+      <button
+        onClick={() => setUrlLoadError(null)}
+        className="ml-3 text-red-600 hover:text-red-800 font-bold"
+        aria-label="Dismiss error"
+      >
+        ✕
+      </button>
+    </div>
+  );
+
   if (!columns.length) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
@@ -344,6 +443,11 @@ const App: React.FC = () => {
               Load Sample Data
             </button>
           </div>
+          <div className="mt-4 text-left">
+            <p className="text-sm font-medium text-gray-600 mb-1">Or load a CSV/TSV from a URL:</p>
+            <UrlInput onLoadUrl={handleLoadFromUrl} isLoading={isUrlLoading} />
+          </div>
+          {urlErrorBanner}
         </div>
       </div>
     );
@@ -378,6 +482,8 @@ const App: React.FC = () => {
               visibleDisplayCount={visibleDisplayCount}
               onColumnUpdate={handleColumnUpdate}
               onDataLoaded={handleFileUpload}
+              onLoadFromUrl={handleLoadFromUrl}
+              isUrlLoading={isUrlLoading}
               filterMode={filterMode}
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
@@ -398,10 +504,13 @@ const App: React.FC = () => {
               recentFiles={recentFiles}
               onLoadFromHistory={handleLoadFromHistory}
               onDeleteFromHistory={handleDeleteFromHistory}
+              onAddPCA={handleAddPCA}
+              pcaVariance={pcaVariance}
             />
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
             {/* Notices */}
+            {urlErrorBanner}
             {columnLimitNotice && (
               <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
                 <span>{columnLimitNotice}</span>

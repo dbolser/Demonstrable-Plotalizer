@@ -212,11 +212,22 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     [data, selectedIds, filterMode]
   );
 
+  // Bump a version whenever the data array reference changes so value-only
+  // updates (e.g. recomputed PCA scores on the same rows/ids) still invalidate
+  // cached cell canvases. Brush/selection changes reuse the same array, so
+  // canvas caching stays effective for interaction.
+  const dataVersionRef = useRef(0);
+  const lastDataRef = useRef<DataPoint[]>(data);
+  if (lastDataRef.current !== data) {
+    dataVersionRef.current += 1;
+    lastDataRef.current = data;
+  }
+
   const dataStateHash = useMemo(() => {
     if (data.length === 0) return 'empty';
     const firstId = data[0]?.__id ?? 0;
     const lastId = data[data.length - 1]?.__id ?? 0;
-    return `${data.length}-${firstId}-${lastId}`;
+    return `${data.length}-${firstId}-${lastId}-v${dataVersionRef.current}`;
   }, [data]);
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
