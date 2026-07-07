@@ -119,6 +119,24 @@ describe('fitRegression (degenerate cases)', () => {
     });
 });
 
+describe('fitRegression (numerical stability)', () => {
+    it('fits large-offset, small-spread data (e.g. timestamps) accurately', () => {
+        // One-pass E[XY] − E[X]E[Y] accumulation catastrophically cancels
+        // here (varU ≈ 8.25e5 vs meanU² ≈ 1e18) and used to reject the fit.
+        const data = rows(
+            Array.from({ length: 100 }, (_, i): [number, number] => [1e9 + i * 100, 2 * (1e9 + i * 100) + 1])
+        );
+        const fit = fitRegression(data, 'x', 'y', false, false);
+        expect(fit).not.toBeNull();
+        expect(fit!.slope).toBeCloseTo(2, 6);
+        expect(fit!.r2).toBeCloseTo(1, 6);
+    });
+
+    it('still rejects a constant column with a large mean', () => {
+        expect(fitRegression(rows([[1e9, 1], [1e9, 2], [1e9, 3]]), 'x', 'y', false, false)).toBeNull();
+    });
+});
+
 describe('buildCellRenderKey (reference-line cache correctness)', () => {
     const base: CellRenderKeyParams = {
         xColName: 'a',
@@ -159,6 +177,11 @@ describe('buildCellRenderKey (reference-line cache correctness)', () => {
             )
         );
         expect(keys.size).toBe(4);
+    });
+
+    it('does not collide when hyphenated column names shift the field split', () => {
+        expect(buildCellRenderKey({ ...base, xColName: 'a-b', yColName: 'c' }))
+            .not.toBe(buildCellRenderKey({ ...base, xColName: 'a', yColName: 'b-c' }));
     });
 
     it('still changes with the pre-existing inputs (data, selection, scales, size)', () => {

@@ -22,5 +22,18 @@ export interface CellRenderKeyParams {
 
 export function buildCellRenderKey(p: CellRenderKeyParams): string {
     const refLines = `ref${p.showIdentityLine ? 1 : 0}${p.showRegressionLine ? 1 : 0}`;
-    return `${p.xColName}-${p.yColName}-${p.xScaleType}-${p.yScaleType}-${p.filterMode}-${p.dataStateHash}-${p.selectedStateHash}-${p.size}-${refLines}`;
+    // Join with a control character that cannot appear in CSV column names:
+    // a plain "-" would collide for hyphenated columns, e.g.
+    // ("a-b", "c") vs ("a", "b-c"), resurrecting the wrong cached cell image.
+    return [
+        p.xColName,
+        p.yColName,
+        p.xScaleType,
+        p.yScaleType,
+        p.filterMode,
+        p.dataStateHash,
+        p.selectedStateHash,
+        p.size,
+        refLines,
+    ].join('');
 }

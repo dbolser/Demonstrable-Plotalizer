@@ -61,43 +61,52 @@ export function fitRegression(
     xLog: boolean,
     yLog: boolean
 ): RegressionFit | null {
-    let n = 0;
-    let sumU = 0;
-    let sumW = 0;
-    let sumUU = 0;
-    let sumWW = 0;
-    let sumUW = 0;
-
+    // Two-pass, mean-centered accumulation: the one-pass E[XY] − E[X]E[Y]
+    // form suffers catastrophic cancellation when values are far from zero
+    // relative to their spread (timestamps, genomic coordinates, ...), which
+    // can silently skew the slope or spuriously reject the fit.
+    const points: Array<[number, number]> = [];
     for (const d of data) {
         const x = +d[xCol];
         const y = +d[yCol];
         if (!isFinite(x) || !isFinite(y)) continue;
         if (xLog && x <= 0) continue;
         if (yLog && y <= 0) continue;
-
-        const u = xLog ? Math.log10(x) : x;
-        const w = yLog ? Math.log10(y) : y;
-
-        n++;
-        sumU += u;
-        sumW += w;
-        sumUU += u * u;
-        sumWW += w * w;
-        sumUW += u * w;
+        points.push([xLog ? Math.log10(x) : x, yLog ? Math.log10(y) : y]);
     }
 
+    const n = points.length;
     if (n < 2) return null;
 
+    let sumU = 0;
+    let sumW = 0;
+    for (const [u, w] of points) {
+        sumU += u;
+        sumW += w;
+    }
     const meanU = sumU / n;
     const meanW = sumW / n;
-    // Population (co)variances; the 1/n factors cancel in slope and r².
-    const varU = sumUU / n - meanU * meanU;
-    const varW = sumWW / n - meanW * meanW;
-    const covUW = sumUW / n - meanU * meanW;
 
-    // Guard against catastrophic cancellation reporting a tiny negative
-    // variance for constant columns.
-    if (!(varU > 1e-12 * Math.max(1, meanU * meanU))) return null;
+    // Population (co)variances; the 1/n factors cancel in slope and r².
+    let varU = 0;
+    let varW = 0;
+    let covUW = 0;
+    for (const [u, w] of points) {
+        const du = u - meanU;
+        const dw = w - meanW;
+        varU += du * du;
+        varW += dw * dw;
+        covUW += du * dw;
+    }
+    varU /= n;
+    varW /= n;
+    covUW /= n;
+
+    // Reject constant-x fits. With centered sums the rounding noise for a
+    // truly constant column is bounded by ~eps² · meanU² (eps ≈ 2.2e-16), so
+    // a 1e-24 relative threshold sits far above the noise floor while still
+    // admitting genuine relative spreads down to ~1e-12 of the mean.
+    if (!(varU > 1e-24 * Math.max(1, meanU * meanU))) return null;
 
     const slope = covUW / varU;
     const intercept = meanW - slope * meanU;
