@@ -1,4 +1,5 @@
 import type { DataPoint } from '../../types';
+import { cellValueToNumber } from './cellValueUtils';
 
 export function computeSelectedStateHash(selectedIds: Set<number>): string {
     // Return a concise string that changes whenever the membership of the set changes,
@@ -30,8 +31,10 @@ export function createSpatialGrid(
         Array.from({ length: gridSize }, () => [] as DataPoint[])
     );
     data.forEach((d) => {
-        const x = +d[xCol];
-        const y = +d[yCol];
+        // cellValueToNumber: missing cells (null/blank) become NaN, not 0 —
+        // otherwise sparse rows would sit in the grid as selectable ghosts.
+        const x = cellValueToNumber(d[xCol]);
+        const y = cellValueToNumber(d[yCol]);
         if (!isFinite(x) || !isFinite(y)) return;
         const sx = xScale(x);
         const sy = yScale(y);
