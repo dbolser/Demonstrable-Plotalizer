@@ -149,4 +149,32 @@ describe('RAF-chunked canvas rendering', () => {
             getContextSpy.mockRestore();
         }
     });
+
+    it('clears the previous plot when the dataset becomes empty', async () => {
+        const onRenderComplete = vi.fn();
+        const props = makeProps({ onRenderComplete });
+        const { container, rerender } = render(
+            <DndProvider backend={HTML5Backend}>
+                <ScatterPlotMatrix {...props} />
+            </DndProvider>
+        );
+        await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+
+        const svg = container.querySelector('svg')!;
+        expect(svg.childNodes.length).toBeGreaterThan(0);
+        expect(container.querySelectorAll('canvas').length).toBeGreaterThan(0);
+
+        // Facet combinations can produce zero matching rows; the stale plot
+        // (SVG cells and cached canvases) must not survive.
+        rerender(
+            <DndProvider backend={HTML5Backend}>
+                <ScatterPlotMatrix {...props} data={[]} />
+            </DndProvider>
+        );
+
+        await waitFor(() => {
+            expect(svg.childNodes.length).toBe(0);
+            expect(container.querySelectorAll('canvas').length).toBe(0);
+        });
+    });
 });

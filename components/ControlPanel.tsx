@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { Column, FilterMode, ColorMode } from '../types';
 import type { ColorState } from '../src/utils/colorUtils';
+import type { FacetColumnSummary, FacetSelections } from '../src/utils/facetUtils';
 import { FileUpload } from './FileUpload';
 import { UrlInput } from './UrlInput';
 import { DownloadIcon } from './icons';
@@ -54,6 +55,12 @@ interface ControlPanelProps {
   rainbowOrderColumn: string | null;
   onResetRainbowOrder: () => void;
   colorState: ColorState | null;
+  facetSummaries: FacetColumnSummary[];
+  facetSelections: FacetSelections;
+  activeFacetCount: number;
+  onToggleFacetValue: (column: string, value: string) => void;
+  onSetColumnFacet: (column: string, values: Set<string> | null) => void;
+  onClearAllFacets: () => void;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -98,7 +105,25 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   rainbowOrderColumn,
   onResetRainbowOrder,
   colorState,
+  facetSummaries,
+  facetSelections,
+  activeFacetCount,
+  onToggleFacetValue,
+  onSetColumnFacet,
+  onClearAllFacets,
 }) => {
+  // Facet columns are collapsed by default; a column with an active facet
+  // still shows its "filtered" badge while collapsed.
+  const [expandedFacetColumns, setExpandedFacetColumns] = useState<Set<string>>(new Set());
+
+  const toggleFacetColumnExpanded = (column: string) => {
+    setExpandedFacetColumns(prev => {
+      const next = new Set(prev);
+      if (next.has(column)) next.delete(column);
+      else next.add(column);
+      return next;
+    });
+  };
 
   const handleDownloadSVG = () => {
     const svgElement = document.querySelector('#scatterplot-matrix-svg');
@@ -508,6 +533,113 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           )}
         </div>
       </div>
+
+      {facetSummaries.length > 0 && (
+        <div data-testid="facets-section">
+          <div className="flex items-center justify-between mb-2 border-b pb-2">
+            <h2 className="text-lg font-bold text-brand-dark flex items-center">
+              Facets
+              {activeFacetCount > 0 && (
+                <span
+                  className="ml-2 inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1 text-xs font-semibold text-white bg-brand-primary rounded-full"
+                  title={`${activeFacetCount} active facet${activeFacetCount > 1 ? 's' : ''}`}
+                  data-testid="active-facet-count"
+                >
+                  {activeFacetCount}
+                </span>
+              )}
+            </h2>
+            {activeFacetCount > 0 && (
+              <button
+                onClick={onClearAllFacets}
+                className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mb-2">
+            Check values to restrict the plotted rows. Columns with nothing checked show all rows.
+          </p>
+          <div className="space-y-2">
+            {facetSummaries.map(summary => {
+              const selected = facetSelections.get(summary.column);
+              const isActive = !!selected && selected.size > 0;
+              const isExpanded = expandedFacetColumns.has(summary.column);
+              return (
+                <div
+                  key={summary.column}
+                  className={`rounded-lg border ${isActive ? 'border-brand-primary bg-blue-50' : 'border-gray-200 bg-gray-50'}`}
+                >
+                  <button
+                    onClick={() => toggleFacetColumnExpanded(summary.column)}
+                    className="w-full flex items-center justify-between p-2 text-left"
+                    aria-expanded={isExpanded}
+                  >
+                    <span className="text-sm font-semibold text-gray-700 truncate" title={summary.column}>
+                      <span aria-hidden="true" className="mr-1 text-gray-400">{isExpanded ? '▾' : '▸'}</span>
+                      {summary.column}
+                    </span>
+                    {isActive && (
+                      <span className="text-xs text-brand-primary font-medium flex-shrink-0 ml-2">
+                        {selected!.size} of {summary.values.length}
+                      </span>
+                    )}
+                  </button>
+                  {isExpanded && (
+                    summary.facetable ? (
+                      <div className="px-2 pb-2">
+                        <div className="flex space-x-1 mb-1">
+                          <button
+                            onClick={() =>
+                              onSetColumnFacet(summary.column, new Set(summary.values.map(v => v.value)))
+                            }
+                            className="text-xs px-1.5 py-0.5 bg-brand-primary text-white rounded hover:bg-brand-dark"
+                          >
+                            All
+                          </button>
+                          <button
+                            onClick={() => onSetColumnFacet(summary.column, null)}
+                            className="text-xs px-1.5 py-0.5 bg-gray-400 text-white rounded hover:bg-gray-600"
+                          >
+                            None
+                          </button>
+                        </div>
+                        <div className="max-h-48 overflow-y-auto space-y-0.5">
+                          {summary.values.map(entry => (
+                            <label
+                              key={entry.value}
+                              className="flex items-center text-xs text-gray-700 cursor-pointer hover:bg-gray-100 rounded px-1 py-0.5"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!selected?.has(entry.value)}
+                                onChange={() => onToggleFacetValue(summary.column, entry.value)}
+                                className="h-3.5 w-3.5 rounded text-brand-primary focus:ring-brand-secondary mr-2 flex-shrink-0"
+                              />
+                              <span
+                                className={`truncate ${entry.isMissing ? 'italic text-gray-500' : ''}`}
+                                title={entry.value}
+                              >
+                                {entry.value}
+                              </span>
+                              <span className="ml-auto pl-2 text-gray-400 flex-shrink-0">({entry.count})</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="px-2 pb-2 text-xs text-gray-500">
+                        Column has {summary.distinctCount} distinct values — too many to facet.
+                      </p>
+                    )
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div>
         <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Analysis</h2>
