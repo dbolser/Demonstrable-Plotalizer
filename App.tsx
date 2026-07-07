@@ -450,6 +450,18 @@ const App: React.FC = () => {
     }
   };
 
+  // If the panel is hidden mid-drag (e.g. ESC clears the selection while the
+  // toggle is off), the divider unmounts and its pointerup/pointercancel
+  // never fire, which would leave the global drag styles (user-select /
+  // cursor) stuck. Reset them whenever the panel goes away during a drag.
+  useEffect(() => {
+    if (!tableVisible && dividerDragRef.current) {
+      dividerDragRef.current = null;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    }
+  }, [tableVisible]);
+
   // Global loading indicator — visible in both empty and main views
   const loadingPill = isRecalculating && (
     <div className="fixed top-4 right-4 z-50 px-4 py-2 bg-brand-primary text-white text-sm font-semibold rounded-full shadow-lg animate-pulse pointer-events-none">
