@@ -98,4 +98,55 @@ describe('RAF-chunked canvas rendering', () => {
         // Final progress report covers all 30 brushable cells (6x6 minus diagonal)
         expect(lastCall).toEqual([30, 30]);
     });
+
+    it('repaints when a same-shape dataset replaces the data (no stale cache reuse)', async () => {
+        // __id is assigned from the row index, so two different files with the
+        // same row count share length/first-id/last-id. The render key must
+        // still change, otherwise the previous file's pixels survive on the
+        // canvas (skip-check) or get restored from the ImageData LRU.
+        const ctx = {
+            clearRect: vi.fn(),
+            fillRect: vi.fn(),
+            arc: vi.fn(),
+            fill: vi.fn(),
+            beginPath: vi.fn(),
+            drawImage: vi.fn(),
+        };
+        const getContextSpy = vi
+            .spyOn(HTMLCanvasElement.prototype, 'getContext')
+            .mockReturnValue(ctx as unknown as RenderingContext);
+        try {
+            const onRenderComplete = vi.fn();
+            const props = makeProps({ onRenderComplete });
+            const { rerender } = render(
+                <DndProvider backend={HTML5Backend}>
+                    <ScatterPlotMatrix {...props} />
+                </DndProvider>
+            );
+            await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+
+            const arcsAfterFirstRender = ctx.arc.mock.calls.length;
+            expect(arcsAfterFirstRender).toBeGreaterThan(0);
+
+            // Same row count, same __ids, same columns — only the values differ.
+            const dataB: DataPoint[] = Array.from({ length: 50 }, (_, i) => ({
+                __id: i,
+                a: (i * 13) % 50,
+                b: i,
+                c: 50 - i,
+            }));
+            onRenderComplete.mockClear();
+            rerender(
+                <DndProvider backend={HTML5Backend}>
+                    <ScatterPlotMatrix {...props} data={dataB} />
+                </DndProvider>
+            );
+            await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+
+            // The new dataset must actually be plotted, not skipped/restored.
+            expect(ctx.arc.mock.calls.length).toBeGreaterThan(arcsAfterFirstRender);
+        } finally {
+            getContextSpy.mockRestore();
+        }
+    });
 });

@@ -224,11 +224,22 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     [data, selectedIds, filterMode]
   );
 
+  // Distinct datasets can share length and __id range (__id is just the row
+  // index), so length/first/last alone cannot tell "file B, same shape" from
+  // "same file". Fold in a version that bumps whenever the data array identity
+  // changes so render keys — and the ImageData snapshots keyed by them — can
+  // never resurrect pixels from a previously loaded dataset.
+  const dataVersionRef = useRef(0);
+  const lastDataRef = useRef<DataPoint[] | null>(null);
   const dataStateHash = useMemo(() => {
-    if (data.length === 0) return 'empty';
+    if (lastDataRef.current !== data) {
+      dataVersionRef.current += 1;
+      lastDataRef.current = data;
+    }
+    if (data.length === 0) return `v${dataVersionRef.current}-empty`;
     const firstId = data[0]?.__id ?? 0;
     const lastId = data[data.length - 1]?.__id ?? 0;
-    return `${data.length}-${firstId}-${lastId}`;
+    return `v${dataVersionRef.current}-${data.length}-${firstId}-${lastId}`;
   }, [data]);
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
