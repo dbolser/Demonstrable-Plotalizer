@@ -1628,6 +1628,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       {/* Canvas container for high-performance point rendering */}
       <div
         ref={canvasContainerRef}
+        id="scatterplot-matrix-canvases"
         style={{
           position: 'absolute',
           top: 0,
