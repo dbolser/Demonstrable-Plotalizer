@@ -12,6 +12,7 @@ interface ControlPanelProps {
   onColumnUpdate: (index: number, updatedColumn: Column) => void;
   onDataLoaded: (data: string, filename: string) => void;
   onLoadFromUrl: (url: string) => void;
+  isUrlLoading: boolean;
   filterMode: FilterMode;
   setFilterMode: (mode: FilterMode) => void;
   showHistograms: boolean;
@@ -40,6 +41,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onColumnUpdate,
   onDataLoaded,
   onLoadFromUrl,
+  isUrlLoading,
   filterMode,
   setFilterMode,
   showHistograms,
@@ -209,7 +211,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         <FileUpload onDataLoaded={onDataLoaded} />
         <div className="mt-3">
           <p className="text-xs font-medium text-gray-500 mb-1">Load from URL</p>
-          <UrlInput onLoadUrl={onLoadFromUrl} />
+          <UrlInput onLoadUrl={onLoadFromUrl} isLoading={isUrlLoading} />
         </div>
         {stringColumns.length > 0 && (
           <p className="text-xs text-gray-500 mt-2">

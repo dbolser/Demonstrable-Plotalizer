@@ -36,12 +36,16 @@ export function looksLikeHtml(text: string): boolean {
     return head.startsWith('<!doctype') || head.startsWith('<html') || head.startsWith('<head') || head.startsWith('<body');
 }
 
+/** Abort a URL data fetch if the server hasn't responded within this window. */
+export const FETCH_TIMEOUT_MS = 15_000;
+
 /**
  * Fetch CSV/TSV text from a remote URL.
  *
  * Throws an Error with a user-presentable message on: invalid URL, network /
- * CORS failure, non-2xx response, empty body, or a body that looks like HTML
- * (e.g. a GitHub page linked instead of its raw file).
+ * CORS failure, timeout, non-2xx response, empty body, or a response that
+ * looks like HTML (e.g. a GitHub page linked instead of its raw file), based
+ * on the Content-Type header or the body itself.
  */
 export async function fetchCsvFromUrl(url: string): Promise<string> {
     if (!isValidDataUrl(url)) {
@@ -49,26 +53,42 @@ export async function fetchCsvFromUrl(url: string): Promise<string> {
     }
 
     let response: Response;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-        response = await fetch(url);
-    } catch {
+        response = await fetch(url, { signal: controller.signal });
+    } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+            throw new Error(`Timed out waiting for "${url}" to respond.`);
+        }
         throw new Error(
             `Could not fetch "${url}". The server may be unreachable or may not allow cross-origin (CORS) requests.`
         );
+    } finally {
+        clearTimeout(timer);
     }
 
     if (!response.ok) {
         throw new Error(`Failed to load "${url}": ${response.status} ${response.statusText}`.trim());
     }
 
+    const htmlError = new Error(
+        `"${url}" returned an HTML page, not CSV/TSV data. If this is a GitHub link, use the "Raw" file URL.`
+    );
+
+    // Reject HTML by Content-Type before downloading the body (catches error
+    // pages that the body heuristic below would miss).
+    const contentType = response.headers?.get('content-type');
+    if (contentType && contentType.toLowerCase().includes('text/html')) {
+        throw htmlError;
+    }
+
     const text = await response.text();
-    if (text.trim().length === 0) {
+    if (!/\S/.test(text)) {
         throw new Error(`"${url}" returned an empty response.`);
     }
     if (looksLikeHtml(text)) {
-        throw new Error(
-            `"${url}" returned an HTML page, not CSV/TSV data. If this is a GitHub link, use the "Raw" file URL.`
-        );
+        throw htmlError;
     }
 
     return text;

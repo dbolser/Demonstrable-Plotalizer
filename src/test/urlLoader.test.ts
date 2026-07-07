@@ -69,7 +69,7 @@ describe('urlLoader', () => {
       vi.unstubAllGlobals();
     });
 
-    const mockFetch = (impl: () => Promise<unknown>) => {
+    const mockFetch = (impl: (url?: unknown, init?: { signal?: AbortSignal }) => Promise<unknown>) => {
       const fn = vi.fn(impl);
       vi.stubGlobal('fetch', fn);
       return fn;
@@ -128,6 +128,51 @@ describe('urlLoader', () => {
       }));
       await expect(fetchCsvFromUrl('https://github.com/user/repo/blob/main/data.csv'))
         .rejects.toThrow(/HTML page/);
+    });
+
+    it('rejects text/html responses by Content-Type before reading the body', async () => {
+      const text = vi.fn(async () => 'a,b\n1,2');
+      mockFetch(async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers({ 'content-type': 'text/html; charset=utf-8' }),
+        text,
+      }));
+      await expect(fetchCsvFromUrl('https://example.com/page'))
+        .rejects.toThrow(/HTML page/);
+      expect(text).not.toHaveBeenCalled();
+    });
+
+    it('accepts CSV served with an explicit CSV Content-Type', async () => {
+      mockFetch(async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: new Headers({ 'content-type': 'text/csv' }),
+        text: async () => 'a,b\n1,2',
+      }));
+      await expect(fetchCsvFromUrl('https://example.com/data.csv')).resolves.toBe('a,b\n1,2');
+    });
+
+    it('aborts and reports a timeout when the server never responds', async () => {
+      vi.useFakeTimers();
+      try {
+        mockFetch(
+          (_url?: unknown, init?: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () =>
+                reject(new DOMException('Aborted', 'AbortError'))
+              );
+            })
+        );
+        const promise = fetchCsvFromUrl('https://example.com/slow.csv');
+        const assertion = expect(promise).rejects.toThrow(/Timed out/);
+        await vi.advanceTimersByTimeAsync(20_000);
+        await assertion;
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

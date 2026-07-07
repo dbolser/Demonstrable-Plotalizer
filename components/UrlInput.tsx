@@ -3,15 +3,18 @@ import { isValidDataUrl } from '../src/utils/urlLoader';
 
 interface UrlInputProps {
   onLoadUrl: (url: string) => void;
+  /** Disables the submit button while a URL load is already in flight. */
+  isLoading?: boolean;
 }
 
 /** Input + button for loading a CSV/TSV file from a remote URL (issue #42). */
-export const UrlInput: React.FC<UrlInputProps> = ({ onLoadUrl }) => {
+export const UrlInput: React.FC<UrlInputProps> = ({ onLoadUrl, isLoading = false }) => {
   const [url, setUrl] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+    if (isLoading) return;
     const trimmed = url.trim();
     if (!trimmed) return;
     if (!isValidDataUrl(trimmed)) {
@@ -38,9 +41,10 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onLoadUrl }) => {
         />
         <button
           type="submit"
-          className="px-3 py-2 bg-brand-secondary text-white text-sm font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors"
+          disabled={isLoading}
+          className="px-3 py-2 bg-brand-secondary text-white text-sm font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Load
+          {isLoading ? 'Loading…' : 'Load'}
         </button>
       </div>
       {validationError && (

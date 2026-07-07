@@ -37,6 +37,12 @@ const App: React.FC = () => {
   const [columnGroups, setColumnGroups] = useState<Map<string, string[]>>(new Map());
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
   const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
+  const [isUrlLoading, setIsUrlLoading] = useState<boolean>(false);
+
+  // Monotonic id for data loads: any newer load invalidates in-flight remote
+  // fetches so a slow earlier response can't overwrite the dataset the user
+  // most recently chose.
+  const loadRequestIdRef = useRef(0);
 
   const [tooltip, setTooltip] = useState<{ visible: boolean; content: string; x: number; y: number }>({
     visible: false,
@@ -139,6 +145,10 @@ const App: React.FC = () => {
   }, []);
 
   const handleDataLoaded = useCallback((csvText: string) => {
+    // A new load supersedes any in-flight remote fetch.
+    loadRequestIdRef.current++;
+    setIsUrlLoading(false);
+    setUrlLoadError(null);
     // Show the indicator first, then defer heavy work to next frame so the
     // browser can actually paint the "Recalculating…" pill before D3 blocks.
     setIsRecalculating(true);
@@ -148,6 +158,7 @@ const App: React.FC = () => {
   }, [applyParsedData]);
 
   const loadSampleData = useCallback(() => {
+    const requestId = ++loadRequestIdRef.current;
     const sampleDataUrl = `${import.meta.env.BASE_URL}data/sample.csv`;
     fetch(sampleDataUrl)
       .then(response => {
@@ -155,6 +166,8 @@ const App: React.FC = () => {
         return response.text();
       })
       .then(csvText => {
+        // Ignore this response if a newer load started in the meantime
+        if (loadRequestIdRef.current !== requestId) return;
         handleDataLoaded(csvText);
       })
       .catch(error => {
@@ -177,27 +190,38 @@ const App: React.FC = () => {
   // Load CSV/TSV from a remote URL; successful loads are recorded in the
   // file history with the source URL as the name (issue #42).
   const handleLoadFromUrl = useCallback(async (url: string) => {
+    const requestId = ++loadRequestIdRef.current;
     setUrlLoadError(null);
+    setIsUrlLoading(true);
     setIsRecalculating(true);
     try {
       const csvText = await fetchCsvFromUrl(url);
+      // Ignore this response if a newer load started in the meantime
+      if (loadRequestIdRef.current !== requestId) return;
       await handleFileUpload(csvText, url);
     } catch (err) {
+      // A newer load owns the loading/error state now; don't clobber it
+      if (loadRequestIdRef.current !== requestId) return;
+      setIsUrlLoading(false);
       setIsRecalculating(false);
       setUrlLoadError(err instanceof Error ? err.message : `Failed to load data from "${url}".`);
     }
   }, [handleFileUpload]);
 
-  // On mount: honour a ?data=<url> query param, otherwise load the sample data
+  // On mount: honour a ?data=<url> query param, otherwise load the sample
+  // data. The ref guard keeps React StrictMode's double-invoked effects (and
+  // any dependency-identity churn) from kicking off a duplicate fetch.
+  const didInitialLoadRef = useRef(false);
   useEffect(() => {
+    if (didInitialLoadRef.current) return;
+    didInitialLoadRef.current = true;
     const dataUrl = getDataUrlFromQuery(window.location.search);
     if (dataUrl) {
       handleLoadFromUrl(dataUrl);
     } else {
       loadSampleData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [handleLoadFromUrl, loadSampleData]);
 
   const handleLoadFromHistory = useCallback((entry: FileHistoryEntry) => {
     handleDataLoaded(entry.csvText);
@@ -322,7 +346,7 @@ const App: React.FC = () => {
 
   // URL load error banner — visible in both empty and main views
   const urlErrorBanner = urlLoadError && (
-    <div className="mx-4 mt-2 px-4 py-2 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between text-sm text-red-800">
+    <div role="alert" className="mx-4 mt-2 px-4 py-2 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between text-sm text-red-800">
       <span>{urlLoadError}</span>
       <button
         onClick={() => setUrlLoadError(null)}
@@ -352,7 +376,7 @@ const App: React.FC = () => {
           </div>
           <div className="mt-4 text-left">
             <p className="text-sm font-medium text-gray-600 mb-1">Or load a CSV/TSV from a URL:</p>
-            <UrlInput onLoadUrl={handleLoadFromUrl} />
+            <UrlInput onLoadUrl={handleLoadFromUrl} isLoading={isUrlLoading} />
           </div>
           {urlErrorBanner}
         </div>
@@ -390,6 +414,7 @@ const App: React.FC = () => {
               onColumnUpdate={handleColumnUpdate}
               onDataLoaded={handleFileUpload}
               onLoadFromUrl={handleLoadFromUrl}
+              isUrlLoading={isUrlLoading}
               filterMode={filterMode}
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
