@@ -7,6 +7,7 @@ import { FileUpload } from './FileUpload';
 import { UrlInput } from './UrlInput';
 import { PanelSection } from './PanelSection';
 import { DownloadIcon } from './icons';
+import { renderMatrixToPngBlob, downloadBlob } from '../src/utils/exportPng';
 import type { FileHistoryEntry } from '../src/utils/fileHistory';
 import { formatRelativeTime } from '../src/utils/fileHistory';
 
@@ -145,25 +146,21 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     });
   };
 
-  const handleDownloadSVG = () => {
-    const svgElement = document.querySelector('#scatterplot-matrix-svg');
-    if (!svgElement) {
-      alert('Could not find the SVG element to download.');
+  const handleDownloadPNG = async () => {
+    // The points live on Canvas layers, not in the SVG, so a plain SVG
+    // serialization exports an empty plot — composite both into a PNG.
+    const svgElement = document.querySelector<SVGSVGElement>('#scatterplot-matrix-svg');
+    const canvasContainer = document.querySelector<HTMLElement>('#scatterplot-matrix-canvases');
+    if (!svgElement || !canvasContainer) {
+      alert('Could not find the plot to export — load some data first.');
       return;
     }
-
-    const serializer = new XMLSerializer();
-    let source = serializer.serializeToString(svgElement);
-    source = '<?xml version="1.0" standalone="no"?>\r\n' + source;
-
-    const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(source);
-
-    const downloadLink = document.createElement("a");
-    downloadLink.href = url;
-    downloadLink.download = "scatter-plot-matrix.svg";
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
+    try {
+      const blob = await renderMatrixToPngBlob(svgElement, canvasContainer, 2);
+      downloadBlob(blob, 'scatter-plot-matrix.png');
+    } catch (err) {
+      alert(`PNG export failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   // Build grouped column list for rendering
@@ -761,11 +758,11 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
       <PanelSection title="Export">
         <button
-          onClick={handleDownloadSVG}
+          onClick={handleDownloadPNG}
           className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
         >
           <DownloadIcon className="h-5 w-5" />
-          <span>Download SVG</span>
+          <span>Download PNG</span>
         </button>
       </PanelSection>
     </div>
