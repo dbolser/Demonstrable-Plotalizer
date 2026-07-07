@@ -5,6 +5,11 @@ import { DownloadIcon } from './icons';
 import type { FileHistoryEntry } from '../src/utils/fileHistory';
 import { formatRelativeTime } from '../src/utils/fileHistory';
 
+export type PCAVarianceEntry = {
+  name: string;
+  ratio: number; // fraction of total variance explained (0..1)
+};
+
 interface ControlPanelProps {
   columns: Column[];
   visibleDisplayCount: number;
@@ -30,6 +35,8 @@ interface ControlPanelProps {
   recentFiles: FileHistoryEntry[];
   onLoadFromHistory: (entry: FileHistoryEntry) => void;
   onDeleteFromHistory: (id: number) => void;
+  onAddPCA: () => void;
+  pcaVariance: PCAVarianceEntry[] | null;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -57,6 +64,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   recentFiles,
   onLoadFromHistory,
   onDeleteFromHistory,
+  onAddPCA,
+  pcaVariance,
 }) => {
 
   const handleDownloadSVG = () => {
@@ -334,6 +343,23 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <span>Download SVG</span>
           </button>
         </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Analysis</h2>
+        <button
+          onClick={onAddPCA}
+          className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors"
+          title="Compute PCA over the visible numeric columns and add PC1-PC3 as derived columns"
+        >
+          Add PCA Columns
+        </button>
+        {pcaVariance && pcaVariance.length > 0 && (
+          <p className="text-xs text-gray-500 mt-2">
+            Explained variance:{' '}
+            {pcaVariance.map(pc => `${pc.name} ${(pc.ratio * 100).toFixed(1)}%`).join(', ')}
+          </p>
+        )}
       </div>
 
       <div>
