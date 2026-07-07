@@ -759,7 +759,19 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!ref.current || data.length === 0) return;
+    if (!ref.current) return;
+    if (data.length === 0) {
+      // An empty dataset (e.g. a facet combination matching no rows) must
+      // clear the previous render rather than leave a stale plot on screen —
+      // the main path below (which normally clears and repaints) is skipped
+      // entirely, so tear down the SVG and the cached canvases here.
+      d3.select(ref.current).selectAll('*').remove();
+      canvasElementsRef.current.forEach(canvas => canvas.remove());
+      canvasElementsRef.current.clear();
+      canvasRenderKeyRef.current.clear();
+      snapshotCachesRef.current.clear();
+      return;
+    }
 
     // Helper function to get mouse position relative to SVG
     const getMousePosition = (event: d3.D3BrushEvent<unknown>) => {

@@ -19,7 +19,15 @@ import type { FileHistoryEntry } from './src/utils/fileHistory';
 import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
 import { UrlInput } from './components/UrlInput';
 import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
-import { detectColumnTypes } from './src/utils/columnTypeUtils';
+import { detectColumnTypes, buildEmptyColumnsNotice } from './src/utils/columnTypeUtils';
+import {
+  applyFacets,
+  buildFacetSummaries,
+  countActiveFacets,
+  setColumnFacet,
+  toggleFacetValue,
+} from './src/utils/facetUtils';
+import type { FacetSelections } from './src/utils/facetUtils';
 import { stepCellSize } from './src/utils/zoomUtils';
 import type { PCAVarianceEntry } from './components/ControlPanel';
 import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
@@ -50,6 +58,7 @@ const App: React.FC = () => {
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
   const [renderProgress, setRenderProgress] = useState<{ done: number; total: number } | null>(null);
   const [columnLimitNotice, setColumnLimitNotice] = useState<string | null>(null);
+  const [emptyColumnsNotice, setEmptyColumnsNotice] = useState<string | null>(null);
   const [cellSize, setCellSize] = useState<number>(150);
   const [showColumnGroups, setShowColumnGroups] = useState<boolean>(false);
   const [columnGroups, setColumnGroups] = useState<Map<string, string[]>>(new Map());
@@ -61,6 +70,9 @@ const App: React.FC = () => {
   const [colorMode, setColorMode] = useState<ColorMode>('none');
   const [categoryColorColumn, setCategoryColorColumn] = useState<string | null>(null);
   const [rainbowOrderColumn, setRainbowOrderColumn] = useState<string | null>(null);
+  // Issue #41: per category column, the set of selected facet values.
+  // Absent column = no facet (all rows pass).
+  const [facetSelections, setFacetSelections] = useState<FacetSelections>(new Map());
 
   // Monotonic id for data loads. A single counter guards every async stage:
   // remote fetches (URL/sample) capture the id before awaiting and drop stale
@@ -118,6 +130,10 @@ const App: React.FC = () => {
       setColumns([]);
       setStringColumns([]);
       setLabelColumn(null);
+      // Clear any notices left over from a previous file, otherwise a
+      // blank/header-only load keeps stale banners on screen.
+      setEmptyColumnsNotice(null);
+      setColumnLimitNotice(null);
       setIsRecalculating(false);
       return;
     }
@@ -129,6 +145,9 @@ const App: React.FC = () => {
     // sparse columns (e.g. PCA scores blank in early rows) parse as null
     // there and were previously dropped from both lists entirely.
     const detected = detectColumnTypes(dataWithIds, result.meta.fields);
+    // Columns blank in every row are excluded from the matrix; tell the user
+    // rather than letting them vanish silently.
+    setEmptyColumnsNotice(buildEmptyColumnsNotice(detected.emptyColumns));
     const allStringCols = detected.stringColumns;
     setStringColumns(allStringCols);
     setLabelColumn(allStringCols[0] || null);
@@ -169,6 +188,7 @@ const App: React.FC = () => {
     }
     setRainbowOrderColumn(null);
     setPreSortColumns(null); // pre-sort order is dataset-specific
+    setFacetSelections(new Map());
     setBrushSelection(null);
     setShowColumnGroups(false);
     setColumnGroups(new Map());
@@ -371,6 +391,40 @@ const App: React.FC = () => {
     setRenderProgress(total > 0 ? { done, total } : null);
   }, []);
 
+  // Issue #41: facets restrict the dataset before anything else sees it.
+  // facetedData feeds the matrix, the data table, and the PCA fit; the brush
+  // then selects within the faceted view. With no active facets this is the
+  // `data` array itself (same reference), so canvas caches stay warm; any
+  // facet change yields a new reference, which bumps ScatterPlotMatrix's
+  // data version and invalidates cached canvases automatically.
+  const facetedData = useMemo(
+    () => applyFacets(data, facetSelections),
+    [data, facetSelections]
+  );
+
+  const facetSummaries = useMemo(
+    () => buildFacetSummaries(data, stringColumns, facetSelections),
+    [data, stringColumns, facetSelections]
+  );
+
+  // Any facet change clears the brush: the selection was made against the
+  // previous view and selected points may no longer be visible. Clearing is
+  // the predictable option (documented in issue #41's PR).
+  const handleToggleFacetValue = useCallback((column: string, value: string) => {
+    setFacetSelections(prev => toggleFacetValue(prev, column, value));
+    setBrushSelection(null);
+  }, []);
+
+  const handleSetColumnFacet = useCallback((column: string, values: Set<string> | null) => {
+    setFacetSelections(prev => setColumnFacet(prev, column, values));
+    setBrushSelection(null);
+  }, []);
+
+  const handleClearAllFacets = useCallback(() => {
+    setFacetSelections(new Map());
+    setBrushSelection(null);
+  }, []);
+
   // Issue #38: PCA over the currently visible numeric columns. PC1..PC3 are
   // appended as derived columns; clicking again recomputes and replaces them.
   // Uses displayColumns (same set the matrix renders) so an active column
@@ -381,7 +435,10 @@ const App: React.FC = () => {
       .filter(col => col.visible && !pcNameSet.has(col.name))
       .map(col => col.name);
 
-    const result = computePCA(data, inputColumnNames);
+    // Fit on the faceted (visible) rows so the components describe what the
+    // user is looking at; project ALL rows so scores remain available for
+    // rows that reappear when facets change.
+    const result = computePCA(facetedData, inputColumnNames);
     if (!result) {
       alert('PCA needs at least 2 visible numeric columns with variation and 2 complete rows.');
       return;
@@ -405,10 +462,14 @@ const App: React.FC = () => {
       name,
       ratio: result.explainedVarianceRatios[k],
     })));
-  }, [data, displayColumns]);
+  }, [data, facetedData, displayColumns]);
 
   // Issue #39: precompute the per-row color state once per mode/column/data
   // change; the canvas paint loop only reads the resulting typed array.
+  // Deliberately computed on the FULL dataset, not facetedData: slotById is
+  // indexed by __id (which spans the full dataset), and full-data assignment
+  // keeps category colors and rainbow ranks stable while faceting — points
+  // keep their color instead of reshuffling as rows are hidden.
   const colorState = useMemo(
     () => computeColorState(data, colorMode, categoryColorColumn, rainbowOrderColumn),
     [data, colorMode, categoryColorColumn, rainbowOrderColumn]
@@ -460,16 +521,16 @@ const App: React.FC = () => {
   const { tableRows, tableCapNote } = useMemo(() => {
     if (hasActiveSelection && brushSelection?.selectedIds) {
       return {
-        tableRows: data.filter(row => brushSelection.selectedIds.has(row.__id)),
+        tableRows: facetedData.filter(row => brushSelection.selectedIds.has(row.__id)),
         tableCapNote: null as string | null,
       };
     }
     if (showDataTable) {
-      const { rows, capNote } = capTableRows(data);
+      const { rows, capNote } = capTableRows(facetedData);
       return { tableRows: rows, tableCapNote: capNote };
     }
     return { tableRows: [], tableCapNote: null as string | null };
-  }, [brushSelection, data, hasActiveSelection, showDataTable]);
+  }, [brushSelection, facetedData, hasActiveSelection, showDataTable]);
 
   const tableVisible = isTableVisible(showDataTable, hasActiveSelection) && tableRows.length > 0;
 
@@ -676,6 +737,12 @@ const App: React.FC = () => {
               rainbowOrderColumn={rainbowOrderColumn}
               onResetRainbowOrder={() => setRainbowOrderColumn(null)}
               colorState={colorState}
+              facetSummaries={facetSummaries}
+              facetSelections={facetSelections}
+              activeFacetCount={countActiveFacets(facetSelections)}
+              onToggleFacetValue={handleToggleFacetValue}
+              onSetColumnFacet={handleSetColumnFacet}
+              onClearAllFacets={handleClearAllFacets}
             />
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
@@ -687,6 +754,18 @@ const App: React.FC = () => {
                 <button
                   onClick={() => setColumnLimitNotice(null)}
                   className="ml-3 text-yellow-600 hover:text-yellow-800 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            {emptyColumnsNotice && (
+              <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
+                <span>{emptyColumnsNotice}</span>
+                <button
+                  onClick={() => setEmptyColumnsNotice(null)}
+                  className="ml-3 text-yellow-600 hover:text-yellow-800 font-bold"
+                  aria-label="Dismiss empty columns notice"
                 >
                   ✕
                 </button>
@@ -725,7 +804,7 @@ const App: React.FC = () => {
                 </button>
               </div>
               <ScatterPlotMatrix
-                data={data}
+                data={facetedData}
                 columns={displayColumns}
                 onColumnReorder={handleColumnReorder}
                 brushSelection={brushSelection}
