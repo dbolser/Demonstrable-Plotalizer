@@ -91,6 +91,27 @@ describe('computeRainbowSlots', () => {
     expect(slots[3]).toBe(RAINBOW_BUCKETS - 1);
   });
 
+  it('treats stored null / empty-string cells as missing, not rank zero', () => {
+    // PapaParse (dynamicTyping) stores blank cells as null; +null === 0, so
+    // without an explicit null check these rows would join the rank as
+    // zero-valued instead of getting the neutral-gray sentinel.
+    const data: DataPoint[] = [
+      { __id: 0, v: 10 },
+      { __id: 1, v: null as unknown as number },
+      { __id: 2, v: '' },
+      { __id: 3, v: '   ' },
+      { __id: 4, v: -5 },
+    ];
+    const slots = computeRainbowSlots(data, 'v');
+
+    expect(slots[1]).toBe(MISSING_SLOT);
+    expect(slots[2]).toBe(MISSING_SLOT);
+    expect(slots[3]).toBe(MISSING_SLOT);
+    // rank spans only the two finite rows: -5 -> start, 10 -> end
+    expect(slots[4]).toBe(0);
+    expect(slots[0]).toBe(RAINBOW_BUCKETS - 1);
+  });
+
   it('gives NaN / missing rows the neutral-gray sentinel, excluded from rank', () => {
     const data = makeRows([10, NaN, 5, null, 20]);
     const slots = computeRainbowSlots(data, 'v');

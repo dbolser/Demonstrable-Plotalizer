@@ -130,9 +130,16 @@ export function computeRainbowSlots(
   }
 
   // Collect finite values with their original position for stable ties.
+  // Missing cells must be rejected BEFORE numeric coercion: PapaParse
+  // (dynamicTyping) stores empty cells as null, and +null === 0, which
+  // would silently rank blank rows as real zero-valued rows instead of
+  // giving them MISSING_SLOT.
   const entries: { id: number; value: number; pos: number }[] = [];
   for (let i = 0; i < n; i++) {
-    const value = +data[i][orderColumn];
+    const raw = data[i][orderColumn];
+    if (raw === null || raw === undefined) continue;
+    if (typeof raw === 'string' && raw.trim() === '') continue;
+    const value = +raw;
     if (!isFinite(value)) continue;
     const id = data[i].__id;
     if (id < 0 || id >= n) continue;

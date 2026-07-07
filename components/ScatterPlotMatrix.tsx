@@ -271,8 +271,14 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           continue;
         }
 
+        // slot is undefined when __id is out of slotById's bounds (e.g. a
+        // transient render where colorState lags a data swap); undefined
+        // fails both sentinel checks, so guard it explicitly to avoid
+        // selectedCoords[undefined].push crashing the paint loop.
         const slot = slotById[d.__id];
-        const bucket = slot === MISSING_SLOT || slot >= numSlots ? numSlots : slot;
+        const bucket = slot === undefined || slot === MISSING_SLOT || slot >= numSlots
+          ? numSlots
+          : slot;
         selectedCoords[bucket].push(screenX, screenY);
       }
 

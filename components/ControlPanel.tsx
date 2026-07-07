@@ -411,7 +411,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                         style={{ backgroundColor: entry.color }}
                         aria-hidden="true"
                       />
-                      <span className="truncate">{entry.name}</span>
+                      <span className="truncate" title={entry.name}>{entry.name}</span>
                     </div>
                   ))}
                   {colorState.categories.length > 15 && (

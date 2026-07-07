@@ -147,6 +147,13 @@ const App: React.FC = () => {
     // Color-by columns are dataset-specific; the mode itself is kept so e.g.
     // rainbow-by-file-order survives loading a new file.
     setCategoryColorColumn(prev => (prev && allStringCols.includes(prev) ? prev : null));
+    // No string columns means category mode can't apply at all; drop back to
+    // 'none' so the UI doesn't show a disabled "Category" option as selected.
+    // (If other string columns exist, the mode is kept and the sub-select
+    // prompts for a new column.)
+    if (allStringCols.length === 0) {
+      setColorMode(prev => (prev === 'category' ? 'none' : prev));
+    }
     setRainbowOrderColumn(null);
     setBrushSelection(null);
     setShowColumnGroups(false);
