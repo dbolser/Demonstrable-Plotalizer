@@ -16,7 +16,9 @@ import type { FileHistoryEntry } from './src/utils/fileHistory';
 import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
 import { UrlInput } from './components/UrlInput';
 import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
+import { stepCellSize } from './src/utils/zoomUtils';
 import type { PCAVarianceEntry } from './components/ControlPanel';
+import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
 
 const MAX_INITIAL_RENDER_POINTS = 15_000;
 
@@ -316,6 +318,25 @@ const App: React.FC = () => {
     setShowColumnGroups(prev => !prev);
   };
 
+  // Issue #57: +/- zoom buttons and keyboard shortcuts step cellSize ~20%.
+  // Wheel-gesture commits arrive through the same setCellSize, so the
+  // ControlPanel slider stays in sync (cellSize is the single source of truth).
+  const handleZoomStep = useCallback((direction: 1 | -1) => {
+    setCellSize(prev => stepCellSize(prev, direction));
+  }, []);
+
+  const handleMatrixKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Don't hijack browser shortcuts (e.g. Ctrl/Cmd +/- page zoom) or Alt combos.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      handleZoomStep(1);
+    } else if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      handleZoomStep(-1);
+    }
+  }, [handleZoomStep]);
+
   const handleRenderComplete = useCallback(() => {
     setIsRecalculating(false);
     setRenderProgress(null);
@@ -361,53 +382,108 @@ const App: React.FC = () => {
     })));
   }, [data, displayColumns]);
 
-  // Compute data to show in the table (only selected points if there's a selection).
+  // Issue #56: the data table is available via a persistent toggle. When a
+  // brush selection exists the table shows the selected rows (and still
+  // auto-appears even with the toggle off, so the feature stays
+  // discoverable); with the toggle on and no selection it shows the full
+  // dataset capped at the first TABLE_ROW_CAP rows.
+  const [showDataTable, setShowDataTable] = useState<boolean>(false);
+
+  const hasActiveSelection = !!brushSelection?.selectedIds && brushSelection.selectedIds.size > 0;
+
   // Memoized so per-frame render-progress updates don't re-filter large datasets.
-  const tableData = useMemo(
-    () => brushSelection?.selectedIds
-      ? data.filter(row => brushSelection.selectedIds.has(row.__id))
-      : [],
-    [brushSelection, data]
-  );
+  const { tableRows, tableCapNote } = useMemo(() => {
+    if (hasActiveSelection && brushSelection?.selectedIds) {
+      return {
+        tableRows: data.filter(row => brushSelection.selectedIds.has(row.__id)),
+        tableCapNote: null as string | null,
+      };
+    }
+    if (showDataTable) {
+      const { rows, capNote } = capTableRows(data);
+      return { tableRows: rows, tableCapNote: capNote };
+    }
+    return { tableRows: [], tableCapNote: null as string | null };
+  }, [brushSelection, data, hasActiveSelection, showDataTable]);
 
-  // B3: Resizable table panel — fixed drag logic
+  const tableVisible = isTableVisible(showDataTable, hasActiveSelection) && tableRows.length > 0;
+
+  // B3 / issue #49: Resizable table panel.
+  //
+  // Drag mechanics: pointer events + setPointerCapture on the divider, so the
+  // drag keeps tracking when the cursor leaves the 12px handle or the window
+  // (the old mouse-event version lost the mouseup outside the window and got
+  // stuck in drag mode). During the drag the height is written straight to
+  // the panel's DOM style — no React state per move — so App (and the whole
+  // scatter-plot matrix component tree) does not re-render on every
+  // pointermove; the matrix container just shrinks and scrolls, its canvases
+  // never repaint. State is committed once on pointerup. The height is
+  // computed from the drag-start anchor + absolute pointer position (no
+  // incremental deltas), and the anchor is the panel's *rendered* height, so
+  // the panel can never jump at drag start even if state and layout disagree.
   const [tableHeight, setTableHeight] = useState(300);
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStartRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const tablePanelRef = useRef<HTMLDivElement>(null);
+  const dividerDragRef = useRef<{
+    pointerId: number;
+    startY: number;
+    startHeight: number;
+    containerHeight: number;
+  } | null>(null);
 
-  useEffect(() => {
-    if (!isDragging) return;
-
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!dragStartRef.current) return;
-      const { startY, startHeight } = dragStartRef.current;
-      const newHeight = startHeight + (startY - e.clientY);
-      const mainElement = document.querySelector('main');
-      const maxHeight = mainElement ? mainElement.getBoundingClientRect().height * 0.8 : 600;
-      setTableHeight(Math.max(100, Math.min(maxHeight, newHeight)));
+  const handleDividerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault(); // No text selection / native drag
+    const panelHeight = tablePanelRef.current?.getBoundingClientRect().height ?? tableHeight;
+    const mainElement = e.currentTarget.parentElement;
+    dividerDragRef.current = {
+      pointerId: e.pointerId,
+      startY: e.clientY,
+      startHeight: panelHeight,
+      containerHeight: mainElement?.getBoundingClientRect().height ?? window.innerHeight,
     };
-
-    const handleMouseUp = () => {
-      setIsDragging(false);
-      document.body.style.userSelect = '';
-      dragStartRef.current = null;
-    };
-
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-
-    return () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [isDragging]);
-
-  const handleDragHandleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault(); // Prevent browser default drag behaviour
-    dragStartRef.current = { startY: e.clientY, startHeight: tableHeight };
-    setIsDragging(true);
+    e.currentTarget.setPointerCapture(e.pointerId);
     document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'row-resize';
   };
+
+  const handleDividerPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dividerDragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const next = clampTableHeight(
+      computeDragHeight(drag.startHeight, drag.startY, e.clientY),
+      drag.containerHeight
+    );
+    if (tablePanelRef.current) {
+      tablePanelRef.current.style.height = `${next}px`;
+    }
+  };
+
+  const handleDividerPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dividerDragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    dividerDragRef.current = null;
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    // Commit the final height to state (single React render for the drag).
+    const finalHeight = tablePanelRef.current?.getBoundingClientRect().height;
+    if (finalHeight) {
+      setTableHeight(Math.round(finalHeight));
+    }
+  };
+
+  // If the panel is hidden mid-drag (e.g. ESC clears the selection while the
+  // toggle is off), the divider unmounts and its pointerup/pointercancel
+  // never fire, which would leave the global drag styles (user-select /
+  // cursor) stuck. Reset them whenever the panel goes away during a drag.
+  useEffect(() => {
+    if (!tableVisible && dividerDragRef.current) {
+      dividerDragRef.current = null;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    }
+  }, [tableVisible]);
 
   // Global loading indicator — visible in both empty and main views
   const loadingPill = isRecalculating && (
@@ -491,6 +567,8 @@ const App: React.FC = () => {
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
               setShowHistograms={setShowHistograms}
+              showDataTable={showDataTable}
+              setShowDataTable={setShowDataTable}
               useUniformLogBins={useUniformLogBins}
               setUseUniformLogBins={setUseUniformLogBins}
               globalLogScale={globalLogScale}
@@ -531,12 +609,36 @@ const App: React.FC = () => {
             )}
 
             <div
-              className="p-4 overflow-auto"
+              className="p-4 overflow-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
               style={{
-                flex: tableData.length > 0 ? '1 1 auto' : '1 1 0',
+                flex: tableVisible ? '1 1 auto' : '1 1 0',
                 minHeight: 0
               }}
+              tabIndex={0}
+              onKeyDown={handleMatrixKeyDown}
             >
+              {/* Issue #57: zoom controls — sticky so they stay visible while
+                  the (potentially huge) matrix scrolls beneath them. */}
+              <div className="sticky top-0 left-0 z-20 mb-2 flex w-fit items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleZoomStep(-1)}
+                  aria-label="Zoom out"
+                  title="Zoom out (-)  ·  Ctrl+scroll to zoom"
+                  className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 bg-white/90 text-gray-700 shadow-sm hover:bg-gray-200 font-bold leading-none select-none"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleZoomStep(1)}
+                  aria-label="Zoom in"
+                  title="Zoom in (+)  ·  Ctrl+scroll to zoom"
+                  className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 bg-white/90 text-gray-700 shadow-sm hover:bg-gray-200 font-bold leading-none select-none"
+                >
+                  +
+                </button>
+              </div>
               <ScatterPlotMatrix
                 data={data}
                 columns={displayColumns}
@@ -550,29 +652,37 @@ const App: React.FC = () => {
                 onPointHover={handlePointHover}
                 onPointLeave={handlePointLeave}
                 cellSize={cellSize}
+                onCellSizeChange={setCellSize}
                 onRenderComplete={handleRenderComplete}
                 onRenderProgress={handleRenderProgress}
                 showIdentityLine={showIdentityLine}
                 showRegressionLine={showRegressionLine}
               />
             </div>
-            {tableData.length > 0 && (
+            {tableVisible && (
               <>
                 <div
                   className="h-3 bg-gray-300 hover:bg-brand-primary cursor-row-resize flex items-center justify-center transition-colors flex-shrink-0"
-                  onMouseDown={handleDragHandleMouseDown}
+                  style={{ touchAction: 'none' }}
+                  onPointerDown={handleDividerPointerDown}
+                  onPointerMove={handleDividerPointerMove}
+                  onPointerUp={handleDividerPointerEnd}
+                  onPointerCancel={handleDividerPointerEnd}
                   title="Drag to resize table"
                 >
                   <div className="w-12 h-1 bg-gray-500 rounded"></div>
                 </div>
                 <div
-                  style={{ height: `${tableHeight}px`, minHeight: '100px', maxHeight: '80%' }}
-                  className="overflow-hidden"
+                  ref={tablePanelRef}
+                  style={{ height: `${tableHeight}px` }}
+                  className="overflow-hidden flex-shrink-0"
                 >
                   <DataTable
-                    data={tableData}
+                    data={tableRows}
                     columns={displayColumns}
                     stringColumns={stringColumns}
+                    heading={hasActiveSelection ? 'Selected Data' : 'All Data'}
+                    capNote={tableCapNote}
                   />
                 </div>
               </>
