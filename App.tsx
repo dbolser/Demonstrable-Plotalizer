@@ -540,8 +540,9 @@ const App: React.FC = () => {
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
         {loadingPill}
         <div className="max-w-xl text-center p-8 bg-white rounded-lg shadow-md">
-          <h1 className="text-3xl font-bold text-brand-primary mb-4">Interactive Scatter Plot Matrix</h1>
-          <p className="mb-6">Upload a CSV file to begin visualizing your data, or load the sample dataset to explore the tool's features.</p>
+          <h1 className="text-3xl font-bold text-brand-primary mb-1">Interactive Scatter Plot Matrix</h1>
+          <p className="text-xs text-gray-400 font-mono mb-4" title="build version">{__APP_VERSION__}</p>
+          <p className="mb-6">Upload a CSV or TSV file to begin visualizing your data, or load the sample dataset to explore the tool's features.</p>
           <div className="flex justify-center space-x-4">
             <FileUpload onDataLoaded={handleFileUpload} />
             <button
@@ -567,7 +568,10 @@ const App: React.FC = () => {
         {loadingPill}
         <Tooltip content={tooltip.content} x={tooltip.x} y={tooltip.y} visible={tooltip.visible} />
         <header className="bg-brand-dark text-white p-4 shadow-md flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Interactive Scatter Plot Matrix</h1>
+          <div className="flex items-baseline space-x-3">
+            <h1 className="text-2xl font-bold">Interactive Scatter Plot Matrix</h1>
+            <span className="text-xs text-gray-300 font-mono" title="build version">{__APP_VERSION__}</span>
+          </div>
           <div className="flex items-center space-x-4">
             {brushSelection && (
               <button
