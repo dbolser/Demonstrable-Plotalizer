@@ -154,6 +154,13 @@ export function buildFacetSummaries(
   stringColumns: string[],
   facets: FacetSelections
 ): FacetColumnSummary[] {
+  // For a column WITHOUT its own facet, "all OTHER columns' facets" equals
+  // ALL active facets — so every such column shares one filtered view.
+  // Compute it lazily once instead of re-scanning the dataset per column.
+  let sharedOtherView: DataPoint[] | null = null;
+  const getSharedOtherView = () =>
+    (sharedOtherView ??= applyFacets(data, facets));
+
   return stringColumns.map(column => {
     const globalCounts = countValues(data, column);
     const distinctCount = globalCounts.size;
@@ -162,11 +169,15 @@ export function buildFacetSummaries(
     }
 
     // Counts within the view faceted by every OTHER column.
-    const otherFacets = setColumnFacet(facets, column, null);
+    const ownFacet = facets.get(column);
+    const hasOwnFacet = ownFacet !== undefined && ownFacet.size > 0;
+    const otherFacetCount = countActiveFacets(facets) - (hasOwnFacet ? 1 : 0);
     const facetedCounts =
-      countActiveFacets(otherFacets) === 0
+      otherFacetCount === 0
         ? globalCounts
-        : countValues(applyFacets(data, otherFacets), column);
+        : hasOwnFacet
+          ? countValues(applyFacets(data, setColumnFacet(facets, column, null)), column)
+          : countValues(getSharedOtherView(), column);
 
     const values: FacetValueCount[] = [...globalCounts.keys()]
       .map(value => ({
