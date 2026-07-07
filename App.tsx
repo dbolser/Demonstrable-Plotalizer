@@ -10,7 +10,9 @@ import { DataTable } from './components/DataTable';
 import type { DataPoint, Column, ScaleType, BrushSelection, FilterMode, ColorMode } from './types';
 import { computeColorState } from './src/utils/colorUtils';
 import { GitHubIcon } from './components/icons';
-import { reorderColumns, filterColumns } from './src/utils/columnUtils';
+import { reorderColumns, filterColumns, restoreColumnOrder } from './src/utils/columnUtils';
+import { sortColumnsByCorrelation } from './src/utils/correlationUtils';
+import type { CorrelationKind } from './src/utils/correlationUtils';
 import { detectColumnGroups } from './src/utils/groupUtils';
 import { saveFile, getHistory, deleteEntry } from './src/utils/fileHistory';
 import type { FileHistoryEntry } from './src/utils/fileHistory';
@@ -38,6 +40,12 @@ const App: React.FC = () => {
   // Issue #50: per-cell reference line toggles (both default off)
   const [showIdentityLine, setShowIdentityLine] = useState<boolean>(false);
   const [showRegressionLine, setShowRegressionLine] = useState<boolean>(false);
+  // Issue #36: per-cell correlation metrics (all default off / Pearson)
+  const [showCorrelation, setShowCorrelation] = useState<boolean>(false);
+  const [tintCellBorders, setTintCellBorders] = useState<boolean>(false);
+  const [correlationMetric, setCorrelationMetric] = useState<CorrelationKind>('pearson');
+  // Column order saved before "sort columns by |r|" so it can be restored.
+  const [preSortColumns, setPreSortColumns] = useState<Column[] | null>(null);
   const [columnFilter, setColumnFilter] = useState<string>('');
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
   const [renderProgress, setRenderProgress] = useState<{ done: number; total: number } | null>(null);
@@ -160,6 +168,7 @@ const App: React.FC = () => {
       setColorMode(prev => (prev === 'category' ? 'none' : prev));
     }
     setRainbowOrderColumn(null);
+    setPreSortColumns(null); // pre-sort order is dataset-specific
     setBrushSelection(null);
     setShowColumnGroups(false);
     setColumnGroups(new Map());
@@ -405,6 +414,29 @@ const App: React.FC = () => {
     [data, colorMode, categoryColorColumn, rainbowOrderColumn]
   );
 
+  // Issue #36: sort columns by mean absolute correlation against the other
+  // visible columns (descending). Visibility comes from displayColumns —
+  // the set actually on screen, i.e. after the column filter — while the
+  // reorder is applied to the base columns array through the same
+  // setColumns path as drag-reorder. The first sort snapshots the current
+  // order so "Restore column order" can undo it.
+  const handleSortByCorrelation = useCallback(() => {
+    const visibleNames = new Set<string>(
+      displayColumns.filter(col => col.visible).map(col => col.name)
+    );
+    const sorted = sortColumnsByCorrelation(columns, data, correlationMetric, visibleNames);
+    if (sorted === columns) return; // fewer than 2 visible columns
+    setPreSortColumns(prev => prev ?? columns);
+    setColumns(sorted);
+  }, [columns, displayColumns, data, correlationMetric]);
+
+  const handleRestoreColumnOrder = useCallback(() => {
+    if (!preSortColumns) return;
+    // Restore the ORDER only; visibility/scale edits made since survive.
+    setColumns(prev => restoreColumnOrder(prev, preSortColumns));
+    setPreSortColumns(null);
+  }, [preSortColumns]);
+
   // Rainbow mode: clicking a diagonal column label orders the gradient by
   // that column's rank; clicking the active column again reverts to file order.
   const handleColumnLabelClick = useCallback((columnName: string) => {
@@ -610,6 +642,15 @@ const App: React.FC = () => {
               setShowIdentityLine={setShowIdentityLine}
               showRegressionLine={showRegressionLine}
               setShowRegressionLine={setShowRegressionLine}
+              showCorrelation={showCorrelation}
+              setShowCorrelation={setShowCorrelation}
+              tintCellBorders={tintCellBorders}
+              setTintCellBorders={setTintCellBorders}
+              correlationMetric={correlationMetric}
+              setCorrelationMetric={setCorrelationMetric}
+              onSortByCorrelation={handleSortByCorrelation}
+              canRestoreColumnOrder={preSortColumns !== null}
+              onRestoreColumnOrder={handleRestoreColumnOrder}
               stringColumns={stringColumns}
               columnFilter={columnFilter}
               onColumnFilterChange={handleColumnFilterChange}
@@ -700,6 +741,9 @@ const App: React.FC = () => {
                 onColumnLabelClick={handleColumnLabelClick}
                 showIdentityLine={showIdentityLine}
                 showRegressionLine={showRegressionLine}
+                showCorrelation={showCorrelation}
+                correlationMetric={correlationMetric}
+                tintCellBorders={tintCellBorders}
               />
             </div>
             {tableVisible && (

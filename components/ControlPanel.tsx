@@ -1,5 +1,6 @@
 import React from 'react';
 import type { Column, FilterMode, ColorMode } from '../types';
+import type { CorrelationKind } from '../src/utils/correlationUtils';
 import type { ColorState } from '../src/utils/colorUtils';
 import { FileUpload } from './FileUpload';
 import { UrlInput } from './UrlInput';
@@ -33,6 +34,15 @@ interface ControlPanelProps {
   setShowIdentityLine: (show: boolean) => void;
   showRegressionLine: boolean;
   setShowRegressionLine: (show: boolean) => void;
+  showCorrelation: boolean;
+  setShowCorrelation: (show: boolean) => void;
+  tintCellBorders: boolean;
+  setTintCellBorders: (tint: boolean) => void;
+  correlationMetric: CorrelationKind;
+  setCorrelationMetric: (kind: CorrelationKind) => void;
+  onSortByCorrelation: () => void;
+  canRestoreColumnOrder: boolean;
+  onRestoreColumnOrder: () => void;
   stringColumns: string[];
   columnFilter: string;
   onColumnFilterChange: (filter: string) => void;
@@ -77,6 +87,15 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setShowIdentityLine,
   showRegressionLine,
   setShowRegressionLine,
+  showCorrelation,
+  setShowCorrelation,
+  tintCellBorders,
+  setTintCellBorders,
+  correlationMetric,
+  setCorrelationMetric,
+  onSortByCorrelation,
+  canRestoreColumnOrder,
+  onRestoreColumnOrder,
   stringColumns,
   columnFilter,
   onColumnFilterChange,
@@ -387,6 +406,61 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   onChange={(e) => setShowRegressionLine(e.target.checked)}
                   className="h-4 w-4 rounded text-brand-primary focus:ring-brand-secondary"
                 />
+              </div>
+            </div>
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700 text-sm">Correlation</span>
+            <div className="mt-1 space-y-1">
+              <div className="flex items-center justify-between">
+                <label htmlFor="showCorrelation" className="text-sm text-gray-600">Show correlation</label>
+                <input
+                  type="checkbox"
+                  id="showCorrelation"
+                  checked={showCorrelation}
+                  onChange={(e) => setShowCorrelation(e.target.checked)}
+                  className="h-4 w-4 rounded text-brand-primary focus:ring-brand-secondary"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label htmlFor="tintCellBorders" className="text-sm text-gray-600">Tint borders by |r|</label>
+                <input
+                  type="checkbox"
+                  id="tintCellBorders"
+                  checked={tintCellBorders}
+                  onChange={(e) => setTintCellBorders(e.target.checked)}
+                  className="h-4 w-4 rounded text-brand-primary focus:ring-brand-secondary"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label htmlFor="correlationMetric" className="text-sm text-gray-600">Metric</label>
+                <select
+                  id="correlationMetric"
+                  value={correlationMetric}
+                  onChange={(e) => setCorrelationMetric(e.target.value as CorrelationKind)}
+                  className="p-1 border rounded-md shadow-sm text-sm focus:ring-brand-secondary focus:border-brand-secondary"
+                >
+                  <option value="pearson">Pearson (r)</option>
+                  <option value="spearman">Spearman (ρ)</option>
+                </select>
+              </div>
+              <div className="flex items-center space-x-1 pt-1">
+                <button
+                  onClick={onSortByCorrelation}
+                  className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+                  title="Reorder visible columns by mean absolute correlation against the other visible columns (descending)"
+                >
+                  Sort columns by |r|
+                </button>
+                {canRestoreColumnOrder && (
+                  <button
+                    onClick={onRestoreColumnOrder}
+                    className="flex-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+                    title="Restore the column order from before the sort"
+                  >
+                    Restore order
+                  </button>
+                )}
               </div>
             </div>
           </div>

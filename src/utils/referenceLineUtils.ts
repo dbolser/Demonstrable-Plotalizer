@@ -1,4 +1,5 @@
 import type { DataPoint } from '../../types';
+import { cellValueToNumber } from './cellValueUtils';
 
 /**
  * Per-cell reference line helpers (issue #50).
@@ -67,8 +68,11 @@ export function fitRegression(
     // can silently skew the slope or spuriously reject the fit.
     const points: Array<[number, number]> = [];
     for (const d of data) {
-        const x = +d[xCol];
-        const y = +d[yCol];
+        // cellValueToNumber, not +raw: `+null === 0`, which would silently
+        // include rows with missing cells as real zeros (issue #36 requires
+        // pairwise-complete handling).
+        const x = cellValueToNumber(d[xCol]);
+        const y = cellValueToNumber(d[yCol]);
         if (!isFinite(x) || !isFinite(y)) continue;
         if (xLog && x <= 0) continue;
         if (yLog && y <= 0) continue;

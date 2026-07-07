@@ -11,6 +11,16 @@ export interface RenderKeyParts {
   showIdentityLine: boolean;
   /** Least-squares regression line toggle. */
   showRegressionLine: boolean;
+  /** Per-cell correlation badge toggle (issue #36). */
+  showCorrelation: boolean;
+  /** Border tint by |r| toggle (issue #36). */
+  tintCellBorders: boolean;
+  /**
+   * Correlation metric ('pearson' | 'spearman'). Only folded into the key
+   * while a correlation feature is active — with both toggles off the
+   * metric cannot affect pixels, so it must not fragment the cache.
+   */
+  correlationMetric: string;
   /** From computeColorStateHash / ColorState.hash; 'none' when no coloring. */
   colorStateHash: string;
 }
@@ -33,6 +43,8 @@ const SEP = '\u0001';
  */
 export function buildRenderKey(parts: RenderKeyParts): string {
   const refLines = `ref${parts.showIdentityLine ? 1 : 0}${parts.showRegressionLine ? 1 : 0}`;
+  const corrActive = parts.showCorrelation || parts.tintCellBorders;
+  const corr = `corr${parts.showCorrelation ? 1 : 0}${parts.tintCellBorders ? 1 : 0}`;
   return [
     parts.xColName,
     parts.yColName,
@@ -43,6 +55,8 @@ export function buildRenderKey(parts: RenderKeyParts): string {
     parts.selectedStateHash,
     parts.size,
     refLines,
+    corr,
+    corrActive ? parts.correlationMetric : '-',
     parts.colorStateHash,
   ].join(SEP);
 }

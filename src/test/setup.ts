@@ -19,6 +19,8 @@ HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
   stroke: vi.fn(),
   setLineDash: vi.fn(),
   fillText: vi.fn(),
+  // Border tint by |r| (issue #36)
+  strokeRect: vi.fn(),
 })) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
 HTMLCanvasElement.prototype.toDataURL = vi.fn(() => 'data:image/png;base64,mock');
