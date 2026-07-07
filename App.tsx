@@ -33,6 +33,9 @@ const App: React.FC = () => {
   const [showHistograms, setShowHistograms] = useState<boolean>(true);
   const [useUniformLogBins, setUseUniformLogBins] = useState<boolean>(false);
   const [globalLogScale, setGlobalLogScale] = useState<boolean>(false);
+  // Issue #50: per-cell reference line toggles (both default off)
+  const [showIdentityLine, setShowIdentityLine] = useState<boolean>(false);
+  const [showRegressionLine, setShowRegressionLine] = useState<boolean>(false);
   const [columnFilter, setColumnFilter] = useState<string>('');
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
   const [renderProgress, setRenderProgress] = useState<{ done: number; total: number } | null>(null);
@@ -570,6 +573,10 @@ const App: React.FC = () => {
               setUseUniformLogBins={setUseUniformLogBins}
               globalLogScale={globalLogScale}
               onToggleGlobalLogScale={handleGlobalLogScaleToggle}
+              showIdentityLine={showIdentityLine}
+              setShowIdentityLine={setShowIdentityLine}
+              showRegressionLine={showRegressionLine}
+              setShowRegressionLine={setShowRegressionLine}
               stringColumns={stringColumns}
               columnFilter={columnFilter}
               onColumnFilterChange={handleColumnFilterChange}
@@ -648,6 +655,8 @@ const App: React.FC = () => {
                 onCellSizeChange={setCellSize}
                 onRenderComplete={handleRenderComplete}
                 onRenderProgress={handleRenderProgress}
+                showIdentityLine={showIdentityLine}
+                showRegressionLine={showRegressionLine}
               />
             </div>
             {tableVisible && (

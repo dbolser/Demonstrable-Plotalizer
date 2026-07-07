@@ -6,6 +6,9 @@ import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
+import { buildCellRenderKey } from '../src/utils/renderKeyUtils';
+import { computeIdentityOverlap, fitRegression } from '../src/utils/referenceLineUtils';
+import type { RegressionFit } from '../src/utils/referenceLineUtils';
 import { createZoomGestureController, isZoomWheelEvent, normalizeWheelDelta } from '../src/utils/zoomUtils';
 
 interface ScatterPlotMatrixProps {
@@ -25,6 +28,10 @@ interface ScatterPlotMatrixProps {
   onCellSizeChange?: (size: number) => void;
   onRenderComplete?: () => void;
   onRenderProgress?: (cellsDone: number, cellsTotal: number) => void;
+  /** Draw a dashed y=x identity line in each cell where the domains overlap. */
+  showIdentityLine?: boolean;
+  /** Draw a per-cell least-squares regression line (fit in transformed space). */
+  showRegressionLine?: boolean;
 }
 
 // RAF-budgeted canvas rendering: paint at most this many cells per frame…
@@ -39,6 +46,19 @@ const SNAPSHOT_CAPACITY_PER_CELL = 6;
 const SNAPSHOT_MAX_CELL_SIZE = 300;
 // Overall byte budget across all cells; beyond this, new snapshots are skipped.
 const SNAPSHOT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
+// Reference-line styling (issue #50). Identity: dashed neutral gray;
+// regression: solid dark red at moderate alpha. Both 1px so they read as
+// annotations, not data.
+const IDENTITY_LINE_COLOR = '#9ca3af';
+const REGRESSION_LINE_COLOR = '#b91c1c';
+const REGRESSION_LINE_ALPHA = 0.7;
+// Only draw the small r² label when the cell is big enough for it not to
+// collide with the point cloud/axis ticks.
+const R2_LABEL_MIN_CELL_SIZE = 100;
+// Safety cap on the per-cell regression fit memo (keys include data hash and
+// filter state, so entries go stale; a simple clear keeps memory bounded).
+const REGRESSION_CACHE_MAX_ENTRIES = 512;
 
 interface CoordinateDisplay {
   visible: boolean;
@@ -133,6 +153,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onCellSizeChange,
   onRenderComplete,
   onRenderProgress,
+  showIdentityLine = false,
+  showRegressionLine = false,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -313,6 +335,126 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, [data]);
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
+
+  // Memoized per-cell regression fits (issue #50): brush-driven repaints in
+  // highlight mode reuse the same fit instead of re-scanning all rows. Keys
+  // fold in everything the fit depends on: column pair, scale types, data
+  // identity, and — in filter mode only, where the fitted subset changes with
+  // the selection — the selection hash.
+  const regressionFitCacheRef = useRef<Map<string, RegressionFit | null>>(new Map());
+
+  // Reference-line overlay pass (issue #50): drawn AFTER the point pass onto
+  // the same canvas, inside the same paint task, so the lines land in the
+  // cached ImageData snapshots too. Deliberately a separate draw step —
+  // it never touches the point-rendering code path.
+  const drawReferenceLines = useCallback((
+    canvas: HTMLCanvasElement,
+    xScale: d3.ScaleLinear<number, number>,
+    yScale: d3.ScaleLinear<number, number>,
+    xColName: string,
+    yColName: string,
+    xLog: boolean,
+    yLog: boolean,
+    cellData: DataPoint[]
+  ) => {
+    if (!showIdentityLine && !showRegressionLine) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.save();
+    // Clip to the cell so out-of-range regression segments never bleed out.
+    ctx.beginPath();
+    ctx.rect(0, 0, size, size);
+    ctx.clip();
+    ctx.lineWidth = 1;
+
+    if (showIdentityLine) {
+      const xd = xScale.domain();
+      const yd = yScale.domain();
+      const overlap = computeIdentityOverlap([xd[0], xd[1]], [yd[0], yd[1]]);
+      if (overlap) {
+        // y=x is only straight in screen space when both axes share a scale
+        // type; under mixed linear/log it curves, so sample it in screen-x
+        // and transform each sample through the cell's own scales.
+        const px0 = xScale(overlap[0]);
+        const px1 = xScale(overlap[1]);
+        const steps = xLog === yLog
+          ? 1
+          : Math.max(2, Math.min(64, Math.ceil(Math.abs(px1 - px0) / 4)));
+
+        ctx.strokeStyle = IDENTITY_LINE_COLOR;
+        ctx.globalAlpha = 0.9;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        for (let s = 0; s <= steps; s++) {
+          const px = px0 + ((px1 - px0) * s) / steps;
+          const v = s === 0 ? overlap[0] : s === steps ? overlap[1] : xScale.invert(px);
+          const py = yScale(v);
+          if (s === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    if (showRegressionLine) {
+      const cache = regressionFitCacheRef.current;
+      const fitKey = [
+        xColName,
+        yColName,
+        xLog ? 'log' : 'linear',
+        yLog ? 'log' : 'linear',
+        dataStateHash,
+        filterMode,
+        filterMode === 'filter' ? selectedStateHash : '-',
+      ].join('|');
+
+      let fit = cache.get(fitKey);
+      if (fit === undefined) {
+        if (cache.size >= REGRESSION_CACHE_MAX_ENTRIES) cache.clear();
+        fit = fitRegression(cellData, xColName, yColName, xLog, yLog);
+        cache.set(fitKey, fit);
+      }
+
+      if (fit) {
+        // The fit lives in transformed space, where both screen axes are
+        // affine — so the line is straight in screen space for every
+        // linear/log combination. Map the transformed endpoints directly
+        // (avoiding a pow(10, w) round-trip that could overflow).
+        const xd = xScale.domain();
+        const yd = yScale.domain();
+        const xr = xScale.range();
+        const yr = yScale.range();
+        const u0 = xLog ? Math.log10(xd[0]) : xd[0];
+        const u1 = xLog ? Math.log10(xd[1]) : xd[1];
+        const t0 = yLog ? Math.log10(yd[0]) : yd[0];
+        const t1 = yLog ? Math.log10(yd[1]) : yd[1];
+        const wToScreenY = (w: number) => yr[0] + ((w - t0) / (t1 - t0)) * (yr[1] - yr[0]);
+
+        ctx.strokeStyle = REGRESSION_LINE_COLOR;
+        ctx.globalAlpha = REGRESSION_LINE_ALPHA;
+        ctx.beginPath();
+        ctx.moveTo(xr[0], wToScreenY(fit.slope * u0 + fit.intercept));
+        ctx.lineTo(xr[1], wToScreenY(fit.slope * u1 + fit.intercept));
+        ctx.stroke();
+
+        // Small r² badge in the cell's top-right corner, only in cells large
+        // enough that it won't clutter the plot area.
+        if (size >= R2_LABEL_MIN_CELL_SIZE) {
+          ctx.font = '9px sans-serif';
+          ctx.fillStyle = REGRESSION_LINE_COLOR;
+          ctx.globalAlpha = 0.8;
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'top';
+          ctx.fillText(`r²=${fit.r2.toFixed(2)}`, size - padding / 2 - 2, padding / 2 + 2);
+        }
+      }
+    }
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }, [showIdentityLine, showRegressionLine, size, padding, dataStateHash, filterMode, selectedStateHash]);
 
   // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
   const dataForStats = useMemo(() => {
@@ -573,6 +715,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       yScale: d3.ScaleLinear<number, number>;
       xColName: string;
       yColName: string;
+      xLog: boolean;
+      yLog: boolean;
     }
     const paintTasks: PaintTask[] = [];
 
@@ -618,7 +762,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       canvas.style.left = `${i * size}px`;
       canvas.style.top = `${j * size}px`;
 
-      const renderKey = `${colX.name}-${colY.name}-${colX.scale}-${colY.scale}-${filterMode}-${dataStateHash}-${selectedStateHash}-${size}`;
+      const renderKey = buildCellRenderKey({
+        xColName: colX.name,
+        yColName: colY.name,
+        xScaleType: colX.scale,
+        yScaleType: colY.scale,
+        filterMode,
+        dataStateHash,
+        selectedStateHash,
+        size,
+        showIdentityLine,
+        showRegressionLine,
+      });
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
@@ -641,6 +796,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             yScale: yScales[j],
             xColName: colX.name,
             yColName: colY.name,
+            xLog: colX.scale === 'log',
+            yLog: colY.scale === 'log',
           });
         }
       }
@@ -1031,6 +1188,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           selectedIds,
           filterMode
         );
+        // Reference-line overlay: a separate draw step after the point pass,
+        // still inside the same task so snapshots capture the full cell.
+        drawReferenceLines(
+          task.canvas,
+          task.xScale,
+          task.yScale,
+          task.xColName,
+          task.yColName,
+          task.xLog,
+          task.yLog,
+          filteredData
+        );
         canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
         maybeSnapshot(task);
         tasksDone++;
@@ -1065,7 +1234,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete, onRenderProgress]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete, onRenderProgress]);
 
   return (
     <div
