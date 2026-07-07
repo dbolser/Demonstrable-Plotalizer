@@ -50,3 +50,22 @@ export function detectColumnTypes(rows: RawRow[], fields?: string[]): ColumnType
   }
   return { numericColumns, stringColumns, emptyColumns };
 }
+
+// User-facing notice for columns that were blank in every row (and therefore
+// silently excluded from the matrix). Returns null when there is nothing to
+// report. Long column lists are truncated so the banner stays one line-ish.
+export function buildEmptyColumnsNotice(
+  emptyColumns: string[],
+  maxNames = 5
+): string | null {
+  const count = emptyColumns.length;
+  if (count === 0) return null;
+  const noun = count === 1 ? 'empty column' : 'empty columns';
+  // Guard against non-positive caps, which would otherwise produce a
+  // malformed message (empty name list / "and N more" for everything).
+  const safeMaxNames = Math.max(1, maxNames);
+  const shown = emptyColumns.slice(0, safeMaxNames).join(', ');
+  const rest = count - Math.min(count, safeMaxNames);
+  const suffix = rest > 0 ? ` and ${rest} more` : '';
+  return `${count} ${noun} hidden: ${shown}${suffix}`;
+}

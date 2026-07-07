@@ -9,18 +9,28 @@ https://dbolser.github.io/Demonstrable-Plotalizer/
 
 ## Features
 
-- 🚀 **High Performance**: Handles 30k+ data points with canvas rendering and intelligent caching
-- 🎯 **Interactive Selection**: 
+- 🚀 **High Performance**: Canvas rendering with Web Worker CSV parsing, RAF time-sliced rendering (the UI never freezes on big files), and a per-cell ImageData LRU cache so toggling a setting back restores instantly. See [ROADMAP.md](ROADMAP.md) for the performance targets and scaling plan.
+- 📁 **Flexible Data Loading**:
+  - Drag-and-drop or click-to-upload CSV / TSV files (`.csv`, `.tsv`, `.tab`, `.txt`)
+  - Load directly from a URL via the input field or a `?data=<url>` query param
+  - Recent files remembered in IndexedDB for one-click reloading
+  - Empty columns are detected and reported rather than silently dropped
+- 🎯 **Interactive Selection**:
   - Rubber-band selection in scatter plots
   - Horizontal/vertical range selection in histograms
   - Selected points highlighted in blue across all plots
   - Toggle between **Highlight** (dim others) and **Filter** (hide others) modes
   - Clear selection with ESC key or ✕ button
-- 🔄 **Drag & Drop**: Reorder columns with smooth performance optimization
-- 🔍 **Smart Filtering**: Filter columns by name patterns (e.g., "mac1", "n_snps")
-- 📊 **Histograms**: Optional histogram display on matrix borders with partial selection coloring
-- 🎨 **Multiple Scales**: Linear and logarithmic scaling options per column
-- 📁 **CSV Import**: Drag and drop CSV files or load sample data
+- 🌈 **Color-By**: Color points by a category column, by file order (rainbow gradient — a quick "is this file sorted?" detector), or by any column's rank via a click on its diagonal label
+- 📊 **Histograms**: Optional histograms on the matrix diagonal, with color-stacked bars when color-by is active
+- 📈 **Reference Lines**: Per-cell x=y identity line and least-squares regression line with r², fit in transformed space on log axes
+- 🧮 **PCA**: One click computes principal components over the visible columns and appends PC1–PC3 as derived columns, with explained-variance readout
+- 🔎 **Fluid Zoom**: Ctrl/Cmd+wheel zooms the matrix smoothly (plus +/− buttons and keys), re-rendering once on commit
+- 📋 **Data Table**: Toggleable table of all rows (or just the current selection) below the matrix, with a drag-resizable divider
+- 🔄 **Column Management**: Drag-and-drop reordering, name-pattern filtering (e.g., "mac1", "n_snps"), visibility toggles, and automatic prefix-based grouping
+- 🎨 **Multiple Scales**: Linear and logarithmic scaling per column, or a global log toggle
+- 💾 **SVG Export**: Download the current matrix as an SVG file
+- 🏷️ **Build Version**: The deployed build's version string is shown in the header
 
 
 ## Quick Start
