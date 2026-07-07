@@ -73,6 +73,15 @@ describe('buildEmptyColumnsNotice', () => {
       '3 empty columns hidden: a, b and 1 more'
     );
   });
+
+  it('clamps a non-positive name cap to 1 instead of emitting a malformed message', () => {
+    expect(buildEmptyColumnsNotice(['a', 'b', 'c'], 0)).toBe(
+      '3 empty columns hidden: a and 2 more'
+    );
+    expect(buildEmptyColumnsNotice(['a'], -3)).toBe(
+      '1 empty column hidden: a'
+    );
+  });
 });
 
 describe('cellValueToNumber', () => {

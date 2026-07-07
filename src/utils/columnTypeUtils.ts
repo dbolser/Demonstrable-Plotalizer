@@ -61,8 +61,11 @@ export function buildEmptyColumnsNotice(
   const count = emptyColumns.length;
   if (count === 0) return null;
   const noun = count === 1 ? 'empty column' : 'empty columns';
-  const shown = emptyColumns.slice(0, maxNames).join(', ');
-  const rest = count - Math.min(count, maxNames);
+  // Guard against non-positive caps, which would otherwise produce a
+  // malformed message (empty name list / "and N more" for everything).
+  const safeMaxNames = Math.max(1, maxNames);
+  const shown = emptyColumns.slice(0, safeMaxNames).join(', ');
+  const rest = count - Math.min(count, safeMaxNames);
   const suffix = rest > 0 ? ` and ${rest} more` : '';
   return `${count} ${noun} hidden: ${shown}${suffix}`;
 }

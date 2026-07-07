@@ -111,6 +111,10 @@ const App: React.FC = () => {
       setColumns([]);
       setStringColumns([]);
       setLabelColumn(null);
+      // Clear any notices left over from a previous file, otherwise a
+      // blank/header-only load keeps stale banners on screen.
+      setEmptyColumnsNotice(null);
+      setColumnLimitNotice(null);
       setIsRecalculating(false);
       return;
     }
