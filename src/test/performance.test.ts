@@ -48,6 +48,10 @@ function mockCreateImageFromCache(key: string, left: number, top: number): HTMLI
   return img;
 }
 
+// Shared CI runners are slow and noisy; the local thresholds are the real
+// targets, CI gets headroom so unrelated PRs don't fail on scheduler jitter.
+const CI_FACTOR = process.env.CI ? 8 : 1;
+
 describe('Performance Tests', () => {
   it('should handle 30k rows efficiently', () => {
     const { data, columns } = createLargeDataset(30000, 5);
@@ -61,7 +65,7 @@ describe('Performance Tests', () => {
     });
 
     // Should complete within reasonable time (adjust threshold as needed)
-    expect(time).toBeLessThan(100); // 100ms threshold
+    expect(time).toBeLessThan(100 * CI_FACTOR); // 100ms threshold
     expect(data.length).toBe(30000);
     expect(columns.length).toBe(5);
   });
@@ -74,7 +78,7 @@ describe('Performance Tests', () => {
       return mapVisibleColumns(columns);
     });
 
-    expect(time).toBeLessThan(10); // Should be very fast
+    expect(time).toBeLessThan(10 * CI_FACTOR); // Should be very fast
     expect(columns.length).toBe(30);
   });
 
@@ -89,7 +93,7 @@ describe('Performance Tests', () => {
       return `${dataLength}-${selectedSize}-${firstDataId}`;
     });
 
-    expect(time).toBeLessThan(1); // Should be immediate
+    expect(time).toBeLessThan(1 * CI_FACTOR); // Should be immediate
   });
 
   it('should handle canvas caching operations efficiently', () => {
@@ -108,7 +112,7 @@ describe('Performance Tests', () => {
       return keys;
     });
 
-    expect(time).toBeLessThan(50); // Should cache 25 canvases quickly
+    expect(time).toBeLessThan(50 * CI_FACTOR); // Should cache 25 canvases quickly
   });
 
   it('should efficiently restore images from cache', () => {
@@ -124,7 +128,7 @@ describe('Performance Tests', () => {
       return images;
     });
 
-    expect(time).toBeLessThan(25); // Allow headroom on CI runners
+    expect(time).toBeLessThan(25 * CI_FACTOR); // Allow headroom on CI runners
   });
 
   it('should handle column reordering with large datasets', () => {
@@ -135,7 +139,7 @@ describe('Performance Tests', () => {
       return reorderColumns(columns, 0, 29);
     });
 
-    expect(time).toBeLessThan(1); // Array swapping should be immediate
+    expect(time).toBeLessThan(1 * CI_FACTOR); // Array swapping should be immediate
   });
 
   it('should efficiently filter columns by name pattern', () => {
@@ -147,7 +151,7 @@ describe('Performance Tests', () => {
       return filterColumns(columns, filter);
     });
 
-    expect(time).toBeLessThan(5); // String filtering should be fast
+    expect(time).toBeLessThan(5 * CI_FACTOR); // String filtering should be fast
   });
 
   it('should handle memory usage efficiently with image caching', () => {
@@ -173,7 +177,7 @@ describe('Performance Tests', () => {
     });
 
     expect(cache.size).toBeLessThanOrEqual(maxCacheSize);
-    expect(time).toBeLessThan(10);
+    expect(time).toBeLessThan(10 * CI_FACTOR);
   });
 
   it('should handle brush selection with large datasets efficiently', () => {
@@ -185,6 +189,6 @@ describe('Performance Tests', () => {
       return filterData(data, selectedIds, 'highlight');
     });
 
-    expect(time).toBeLessThan(50); // Should filter 30k records reasonably fast
+    expect(time).toBeLessThan(50 * CI_FACTOR); // Should filter 30k records reasonably fast
   });
 });

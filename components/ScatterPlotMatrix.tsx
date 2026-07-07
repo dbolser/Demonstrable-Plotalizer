@@ -224,18 +224,24 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     [data, selectedIds, filterMode]
   );
 
-  // Distinct datasets can share length and __id range (__id is just the row
-  // index), so length/first/last alone cannot tell "file B, same shape" from
-  // "same file". Fold in a version that bumps whenever the data array identity
-  // changes so render keys — and the ImageData snapshots keyed by them — can
-  // never resurrect pixels from a previously loaded dataset.
+  // Single data-identity version: bump whenever the data array reference
+  // changes (ref-guarded, so it is idempotent under strict-mode double
+  // renders). Two things depend on it: (1) distinct datasets can share
+  // length and __id range (__id is just the row index), so length/first/last
+  // alone cannot tell "file B, same shape" from "same file"; (2) value-only
+  // updates (e.g. recomputed PCA scores on the same rows/ids) reuse the same
+  // ids. Folding the version into dataStateHash means render keys — and the
+  // ImageData snapshots keyed by them — can never resurrect pixels from a
+  // previous dataset. Brush/selection changes reuse the same array, so
+  // canvas caching stays effective for interaction.
   const dataVersionRef = useRef(0);
-  const lastDataRef = useRef<DataPoint[] | null>(null);
+  const lastDataRef = useRef<DataPoint[]>(data);
+  if (lastDataRef.current !== data) {
+    dataVersionRef.current += 1;
+    lastDataRef.current = data;
+  }
+
   const dataStateHash = useMemo(() => {
-    if (lastDataRef.current !== data) {
-      dataVersionRef.current += 1;
-      lastDataRef.current = data;
-    }
     if (data.length === 0) return `v${dataVersionRef.current}-empty`;
     const firstId = data[0]?.__id ?? 0;
     const lastId = data[data.length - 1]?.__id ?? 0;

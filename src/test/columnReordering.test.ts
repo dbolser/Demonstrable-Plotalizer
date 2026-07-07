@@ -104,7 +104,7 @@ describe('Column Filtering Logic', () => {
 
   it('should show all columns when filter is empty', () => {
     const columns = createMockColumns(['col1', 'col2', 'col3']);
-    const filter = '';
+    const filter: string = '';
 
     const filteredColumns = columns.map(col => ({
       ...col,
