@@ -11,6 +11,12 @@ export interface RenderKeyParts {
   colorStateHash: string;
 }
 
+// Field separator for render keys. A control character rather than '-' so
+// user-controlled fragments (CSV column names inside colName / colorStateHash)
+// containing dashes can never shift field boundaries and make two different
+// configurations collide on the same cache key.
+const SEP = '\u0001';
+
 /**
  * Cache key for a rendered scatter cell. Gates both the "skip repaint"
  * check and the per-canvas ImageData LRU, so it MUST include every input
@@ -18,5 +24,15 @@ export interface RenderKeyParts {
  * (mode + category column + ordering column + palette version).
  */
 export function buildRenderKey(parts: RenderKeyParts): string {
-  return `${parts.xColName}-${parts.yColName}-${parts.xScale}-${parts.yScale}-${parts.filterMode}-${parts.dataStateHash}-${parts.selectedStateHash}-${parts.size}-${parts.colorStateHash}`;
+  return [
+    parts.xColName,
+    parts.yColName,
+    parts.xScale,
+    parts.yScale,
+    parts.filterMode,
+    parts.dataStateHash,
+    parts.selectedStateHash,
+    parts.size,
+    parts.colorStateHash,
+  ].join(SEP);
 }
