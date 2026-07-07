@@ -17,7 +17,7 @@ import type { FileHistoryEntry } from './src/utils/fileHistory';
 import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
 import { UrlInput } from './components/UrlInput';
 import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
-import { detectColumnTypes } from './src/utils/columnTypeUtils';
+import { detectColumnTypes, buildEmptyColumnsNotice } from './src/utils/columnTypeUtils';
 import { stepCellSize } from './src/utils/zoomUtils';
 import type { PCAVarianceEntry } from './components/ControlPanel';
 import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
@@ -42,6 +42,7 @@ const App: React.FC = () => {
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
   const [renderProgress, setRenderProgress] = useState<{ done: number; total: number } | null>(null);
   const [columnLimitNotice, setColumnLimitNotice] = useState<string | null>(null);
+  const [emptyColumnsNotice, setEmptyColumnsNotice] = useState<string | null>(null);
   const [cellSize, setCellSize] = useState<number>(150);
   const [showColumnGroups, setShowColumnGroups] = useState<boolean>(false);
   const [columnGroups, setColumnGroups] = useState<Map<string, string[]>>(new Map());
@@ -110,6 +111,10 @@ const App: React.FC = () => {
       setColumns([]);
       setStringColumns([]);
       setLabelColumn(null);
+      // Clear any notices left over from a previous file, otherwise a
+      // blank/header-only load keeps stale banners on screen.
+      setEmptyColumnsNotice(null);
+      setColumnLimitNotice(null);
       setIsRecalculating(false);
       return;
     }
@@ -121,6 +126,9 @@ const App: React.FC = () => {
     // sparse columns (e.g. PCA scores blank in early rows) parse as null
     // there and were previously dropped from both lists entirely.
     const detected = detectColumnTypes(dataWithIds, result.meta.fields);
+    // Columns blank in every row are excluded from the matrix; tell the user
+    // rather than letting them vanish silently.
+    setEmptyColumnsNotice(buildEmptyColumnsNotice(detected.emptyColumns));
     const allStringCols = detected.stringColumns;
     setStringColumns(allStringCols);
     setLabelColumn(allStringCols[0] || null);
@@ -642,6 +650,18 @@ const App: React.FC = () => {
                 <button
                   onClick={() => setColumnLimitNotice(null)}
                   className="ml-3 text-yellow-600 hover:text-yellow-800 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+            {emptyColumnsNotice && (
+              <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
+                <span>{emptyColumnsNotice}</span>
+                <button
+                  onClick={() => setEmptyColumnsNotice(null)}
+                  className="ml-3 text-yellow-600 hover:text-yellow-800 font-bold"
+                  aria-label="Dismiss empty columns notice"
                 >
                   ✕
                 </button>
