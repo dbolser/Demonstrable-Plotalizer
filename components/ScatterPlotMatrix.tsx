@@ -5,6 +5,7 @@ import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
+import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -27,6 +28,14 @@ interface ScatterPlotMatrixProps {
 const CELLS_PER_FRAME = 4;
 // …or stop early once this much of the frame has been spent painting.
 const FRAME_BUDGET_MS = 12;
+
+// ImageData snapshot cache: restore previously-seen (unselected) cell
+// configurations via putImageData instead of re-plotting every point.
+const SNAPSHOT_CAPACITY_PER_CELL = 6;
+// Skip caching for very large cells — one 300px RGBA snapshot is ~360KB.
+const SNAPSHOT_MAX_CELL_SIZE = 300;
+// Overall byte budget across all cells; beyond this, new snapshots are skipped.
+const SNAPSHOT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 
 interface CoordinateDisplay {
   visible: boolean;
@@ -125,6 +134,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const canvasRenderKeyRef = useRef<Map<string, string>>(new Map());
+  // Per-canvas LRU of unselected-state ImageData snapshots, keyed by renderKey
+  const snapshotCachesRef = useRef<Map<string, ImageDataLRU>>(new Map());
+  const snapshotDataHashRef = useRef<string>('');
   const isDraggingRef = useRef(false);
   const [coordinateDisplay, setCoordinateDisplay] = useState<CoordinateDisplay>({
     visible: false,
@@ -212,9 +224,15 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     [data, selectedIds, filterMode]
   );
 
-  // Bump a version whenever the data array reference changes so value-only
-  // updates (e.g. recomputed PCA scores on the same rows/ids) still invalidate
-  // cached cell canvases. Brush/selection changes reuse the same array, so
+  // Single data-identity version: bump whenever the data array reference
+  // changes (ref-guarded, so it is idempotent under strict-mode double
+  // renders). Two things depend on it: (1) distinct datasets can share
+  // length and __id range (__id is just the row index), so length/first/last
+  // alone cannot tell "file B, same shape" from "same file"; (2) value-only
+  // updates (e.g. recomputed PCA scores on the same rows/ids) reuse the same
+  // ids. Folding the version into dataStateHash means render keys — and the
+  // ImageData snapshots keyed by them — can never resurrect pixels from a
+  // previous dataset. Brush/selection changes reuse the same array, so
   // canvas caching stays effective for interaction.
   const dataVersionRef = useRef(0);
   const lastDataRef = useRef<DataPoint[]>(data);
@@ -224,10 +242,10 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }
 
   const dataStateHash = useMemo(() => {
-    if (data.length === 0) return 'empty';
+    if (data.length === 0) return `v${dataVersionRef.current}-empty`;
     const firstId = data[0]?.__id ?? 0;
     const lastId = data[data.length - 1]?.__id ?? 0;
-    return `${data.length}-${firstId}-${lastId}-v${dataVersionRef.current}`;
+    return `v${dataVersionRef.current}-${data.length}-${firstId}-${lastId}`;
   }, [data]);
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
@@ -494,6 +512,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     }
     const paintTasks: PaintTask[] = [];
 
+    // Snapshots are only valid for the dataset they were rendered from:
+    // drop them all when the data changes.
+    if (snapshotDataHashRef.current !== dataStateHash) {
+      snapshotCachesRef.current.clear();
+      snapshotDataHashRef.current = dataStateHash;
+    }
+
     brushableCells.each(function ([i, j]) {
       const i_original = visibleIndexToOriginalIndex.get(i);
       const j_original = visibleIndexToOriginalIndex.get(j);
@@ -533,15 +558,27 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
-        paintTasks.push({
-          canvas,
-          canvasKey,
-          renderKey,
-          xScale: xScales[i],
-          yScale: yScales[j],
-          xColName: colX.name,
-          yColName: colY.name,
-        });
+        // LRU hit: restore a previously-seen configuration instantly
+        // instead of re-plotting every point. Snapshots are unselected-state
+        // only, so only consult the cache when nothing is selected.
+        const cached = selectedIds.size === 0
+          ? snapshotCachesRef.current.get(canvasKey)?.get(renderKey)
+          : undefined;
+        const ctx = cached ? canvas.getContext('2d') : null;
+        if (cached && ctx && typeof ctx.putImageData === 'function') {
+          ctx.putImageData(cached, 0, 0);
+          canvasRenderKeyRef.current.set(canvasKey, renderKey);
+        } else {
+          paintTasks.push({
+            canvas,
+            canvasKey,
+            renderKey,
+            xScale: xScales[i],
+            yScale: yScales[j],
+            xColName: colX.name,
+            yColName: colY.name,
+          });
+        }
       }
     });
 
@@ -557,6 +594,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     canvasesToRemove.forEach(key => {
       canvasElementsRef.current.delete(key);
       canvasRenderKeyRef.current.delete(key);
+      snapshotCachesRef.current.delete(key);
     });
 
     const diagonalCells = cell.filter(([i, j]) => i === j);
@@ -883,6 +921,29 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     let tasksDone = 0;
     let framesUsed = 0;
 
+    // After a cache miss is painted, snapshot the result so the same
+    // configuration can be restored instantly later. Unselected-state only,
+    // skipped for very large cells and once the global byte budget is hit.
+    const maybeSnapshot = (task: PaintTask) => {
+      if (selectedIds.size !== 0) return;
+      if (size > SNAPSHOT_MAX_CELL_SIZE) return;
+      const entryBytes = task.canvas.width * task.canvas.height * 4;
+      if (totalSnapshotBytes(snapshotCachesRef.current) + entryBytes > SNAPSHOT_MAX_TOTAL_BYTES) return;
+      const ctx = task.canvas.getContext('2d');
+      if (!ctx || typeof ctx.getImageData !== 'function') return;
+      try {
+        let lru = snapshotCachesRef.current.get(task.canvasKey);
+        if (!lru) {
+          lru = new ImageDataLRU(SNAPSHOT_CAPACITY_PER_CELL);
+          snapshotCachesRef.current.set(task.canvasKey, lru);
+        }
+        lru.set(task.renderKey, ctx.getImageData(0, 0, task.canvas.width, task.canvas.height));
+      } catch {
+        // getImageData can throw (e.g. tainted canvas, unsupported test env);
+        // caching is an optimization only, so ignore and move on.
+      }
+    };
+
     const paintFrame = () => {
       rafId = null;
       if (cancelled) return;
@@ -907,6 +968,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           filterMode
         );
         canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
+        maybeSnapshot(task);
         tasksDone++;
         paintedThisFrame++;
       }
