@@ -1,3 +1,5 @@
+import type { DataPoint } from '../../types';
+
 export function computeSelectedStateHash(selectedIds: Set<number>): string {
     // Return a concise string that changes whenever the membership of the set changes,
     // but is independent of insertion order. We combine the size with a simple additive hash
@@ -24,8 +26,8 @@ export function createSpatialGrid(
     size: number,
     gridSize = 20
 ): DataPoint[][][] {
-    const grid: any[][][] = Array.from({ length: gridSize }, () =>
-        Array.from({ length: gridSize }, () => [])
+    const grid: DataPoint[][][] = Array.from({ length: gridSize }, () =>
+        Array.from({ length: gridSize }, () => [] as DataPoint[])
     );
     data.forEach((d) => {
         const x = +d[xCol];
