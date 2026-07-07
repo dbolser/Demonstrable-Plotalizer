@@ -149,6 +149,9 @@ describe('buildRenderKey (reference-line cache correctness)', () => {
         size: 150,
         showIdentityLine: false,
         showRegressionLine: false,
+        showCorrelation: false,
+        tintCellBorders: false,
+        correlationMetric: 'pearson',
         colorStateHash: 'none',
     };
 

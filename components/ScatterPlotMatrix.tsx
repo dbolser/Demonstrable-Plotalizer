@@ -18,6 +18,12 @@ import {
 } from '../src/utils/histogramStackUtils';
 import { computeIdentityOverlap, fitRegression } from '../src/utils/referenceLineUtils';
 import type { RegressionFit } from '../src/utils/referenceLineUtils';
+import {
+  pearsonFromFit,
+  spearmanCorrelation,
+  correlationBorderAlpha,
+} from '../src/utils/correlationUtils';
+import type { CorrelationKind, CorrelationResult } from '../src/utils/correlationUtils';
 import { createZoomGestureController, isZoomWheelEvent, normalizeWheelDelta } from '../src/utils/zoomUtils';
 
 interface ScatterPlotMatrixProps {
@@ -50,6 +56,12 @@ interface ScatterPlotMatrixProps {
   showIdentityLine?: boolean;
   /** Draw a per-cell least-squares regression line (fit in transformed space). */
   showRegressionLine?: boolean;
+  /** Draw a compact per-cell correlation badge, e.g. "r=-0.82" (issue #36). */
+  showCorrelation?: boolean;
+  /** Metric behind the badge and border tint: Pearson r or Spearman ρ. */
+  correlationMetric?: CorrelationKind;
+  /** Tint each cell's border by |r| — transparent → strong for 0 → 1. */
+  tintCellBorders?: boolean;
 }
 
 // RAF-budgeted canvas rendering: paint at most this many cells per frame…
@@ -71,12 +83,28 @@ const SNAPSHOT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 const IDENTITY_LINE_COLOR = '#9ca3af';
 const REGRESSION_LINE_COLOR = '#b91c1c';
 const REGRESSION_LINE_ALPHA = 0.7;
-// Only draw the small r² label when the cell is big enough for it not to
-// collide with the point cloud/axis ticks.
-const R2_LABEL_MIN_CELL_SIZE = 100;
-// Safety cap on the per-cell regression fit memo (keys include data hash and
+// Only draw the small badge (r / r²) when the cell is big enough for it not
+// to collide with the point cloud/axis ticks.
+const BADGE_MIN_CELL_SIZE = 100;
+// Correlation badge color when the regression overlay is off (with the
+// regression line on, the combined badge inherits its dark red).
+const CORRELATION_BADGE_COLOR = '#374151';
+// Border tint (issue #36): amber, deliberately distinct from the selection
+// blue (#1e40af), the dimmed gray, and the regression dark red, so the tint
+// never fights the selection/brush visuals. Opacity encodes |r|.
+const CORRELATION_BORDER_COLOR = '#d97706';
+// Safety cap on the per-cell pairwise-stats memo (keys include data hash and
 // filter state, so entries go stale; a simple clear keeps memory bounded).
-const REGRESSION_CACHE_MAX_ENTRIES = 512;
+const PAIR_STATS_CACHE_MAX_ENTRIES = 512;
+
+// One memo entry per column pair/config: the regression fit (issue #50) and
+// the Spearman correlation (issue #36) share the cache — Pearson r is
+// derived from the fit itself (r = sign(slope)·√r²). Fields are computed
+// lazily, `undefined` = not computed yet, `null` = computed but degenerate.
+interface PairStats {
+  fit?: RegressionFit | null;
+  spearman?: CorrelationResult | null;
+}
 
 interface CoordinateDisplay {
   visible: boolean;
@@ -224,6 +252,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onColumnLabelClick,
   showIdentityLine = false,
   showRegressionLine = false,
+  showCorrelation = false,
+  correlationMetric = 'pearson',
+  tintCellBorders = false,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -461,17 +492,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
 
-  // Memoized per-cell regression fits (issue #50): brush-driven repaints in
-  // highlight mode reuse the same fit instead of re-scanning all rows. Keys
-  // fold in everything the fit depends on: column pair, scale types, data
-  // identity, and — in filter mode only, where the fitted subset changes with
-  // the selection — the selection hash.
-  const regressionFitCacheRef = useRef<Map<string, RegressionFit | null>>(new Map());
+  // Memoized per-cell pairwise stats (issues #50/#36): brush-driven repaints
+  // in highlight mode reuse the same fit/correlation instead of re-scanning
+  // all rows. Keys fold in everything the stats depend on: column pair,
+  // scale types, data identity, and — in filter mode only, where the fitted
+  // subset changes with the selection — the selection hash.
+  const pairStatsCacheRef = useRef<Map<string, PairStats>>(new Map());
 
-  // Reference-line overlay pass (issue #50): drawn AFTER the point pass onto
-  // the same canvas, inside the same paint task, so the lines land in the
-  // cached ImageData snapshots too. Deliberately a separate draw step —
-  // it never touches the point-rendering code path.
+  // Reference-line + metrics overlay pass (issues #50/#36): drawn AFTER the
+  // point pass onto the same canvas, inside the same paint task, so lines,
+  // badges and border tints land in the cached ImageData snapshots too.
+  // Deliberately a separate draw step — it never touches the
+  // point-rendering code path.
   const drawReferenceLines = useCallback((
     canvas: HTMLCanvasElement,
     xScale: d3.ScaleLinear<number, number>,
@@ -482,9 +514,67 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     yLog: boolean,
     cellData: DataPoint[]
   ) => {
-    if (!showIdentityLine && !showRegressionLine) return;
+    const correlationActive = showCorrelation || tintCellBorders;
+    if (!showIdentityLine && !showRegressionLine && !correlationActive) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
+
+    // Pairwise stats, memoized. The regression fit is needed for the
+    // regression line AND for a Pearson badge/tint (r = sign(slope)·√r²);
+    // Spearman is a separate rank pass, cached in the same entry.
+    const needsFit = showRegressionLine || (correlationActive && correlationMetric === 'pearson');
+    const needsSpearman = correlationActive && correlationMetric === 'spearman';
+    let stats: PairStats | null = null;
+    if (needsFit || needsSpearman) {
+      const cache = pairStatsCacheRef.current;
+      const statsKey = [
+        xColName,
+        yColName,
+        xLog ? 'log' : 'linear',
+        yLog ? 'log' : 'linear',
+        dataStateHash,
+        filterMode,
+        filterMode === 'filter' ? selectedStateHash : '-',
+      ].join('|');
+
+      let entry = cache.get(statsKey);
+      if (!entry) {
+        if (cache.size >= PAIR_STATS_CACHE_MAX_ENTRIES) cache.clear();
+        entry = {};
+        cache.set(statsKey, entry);
+      }
+      if (needsFit && entry.fit === undefined) {
+        entry.fit = fitRegression(cellData, xColName, yColName, xLog, yLog);
+      }
+      if (needsSpearman && entry.spearman === undefined) {
+        // Spearman is symmetric — ρ(x,y) === ρ(y,x), and the log-axis row
+        // exclusions are the same either way — so when the transposed cell
+        // has already computed it, reuse that instead of re-running two
+        // O(n log n) rank sorts for the mirror half of the matrix.
+        const mirrorKey = [
+          yColName,
+          xColName,
+          yLog ? 'log' : 'linear',
+          xLog ? 'log' : 'linear',
+          dataStateHash,
+          filterMode,
+          filterMode === 'filter' ? selectedStateHash : '-',
+        ].join('|');
+        const mirrored = cache.get(mirrorKey)?.spearman;
+        entry.spearman =
+          mirrored !== undefined
+            ? mirrored
+            : spearmanCorrelation(cellData, xColName, yColName, xLog, yLog);
+      }
+      stats = entry;
+    }
+    const fit = stats?.fit ?? null;
+    // n < 2 (or zero variance) yields null → no badge, no tint.
+    const corr: CorrelationResult | null = correlationActive
+      ? correlationMetric === 'spearman'
+        ? stats?.spearman ?? null
+        : pearsonFromFit(fit)
+      : null;
 
     ctx.save();
     // Clip to the cell so out-of-range regression segments never bleed out.
@@ -523,63 +613,66 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       }
     }
 
-    if (showRegressionLine) {
-      const cache = regressionFitCacheRef.current;
-      const fitKey = [
-        xColName,
-        yColName,
-        xLog ? 'log' : 'linear',
-        yLog ? 'log' : 'linear',
-        dataStateHash,
-        filterMode,
-        filterMode === 'filter' ? selectedStateHash : '-',
-      ].join('|');
+    if (showRegressionLine && fit) {
+      // The fit lives in transformed space, where both screen axes are
+      // affine — so the line is straight in screen space for every
+      // linear/log combination. Map the transformed endpoints directly
+      // (avoiding a pow(10, w) round-trip that could overflow).
+      const xd = xScale.domain();
+      const yd = yScale.domain();
+      const xr = xScale.range();
+      const yr = yScale.range();
+      const u0 = xLog ? Math.log10(xd[0]) : xd[0];
+      const u1 = xLog ? Math.log10(xd[1]) : xd[1];
+      const t0 = yLog ? Math.log10(yd[0]) : yd[0];
+      const t1 = yLog ? Math.log10(yd[1]) : yd[1];
+      const wToScreenY = (w: number) => yr[0] + ((w - t0) / (t1 - t0)) * (yr[1] - yr[0]);
 
-      let fit = cache.get(fitKey);
-      if (fit === undefined) {
-        if (cache.size >= REGRESSION_CACHE_MAX_ENTRIES) cache.clear();
-        fit = fitRegression(cellData, xColName, yColName, xLog, yLog);
-        cache.set(fitKey, fit);
+      ctx.strokeStyle = REGRESSION_LINE_COLOR;
+      ctx.globalAlpha = REGRESSION_LINE_ALPHA;
+      ctx.beginPath();
+      ctx.moveTo(xr[0], wToScreenY(fit.slope * u0 + fit.intercept));
+      ctx.lineTo(xr[1], wToScreenY(fit.slope * u1 + fit.intercept));
+      ctx.stroke();
+    }
+
+    // Border tint by |r| (issue #36): a thin inset stroke whose opacity
+    // encodes the correlation strength — transparent at |r|=0, strong at 1.
+    if (tintCellBorders && corr) {
+      const alpha = correlationBorderAlpha(Math.abs(corr.r));
+      if (alpha > 0) {
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = CORRELATION_BORDER_COLOR;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 1, size - 2, size - 2);
+        ctx.lineWidth = 1;
       }
+    }
 
-      if (fit) {
-        // The fit lives in transformed space, where both screen axes are
-        // affine — so the line is straight in screen space for every
-        // linear/log combination. Map the transformed endpoints directly
-        // (avoiding a pow(10, w) round-trip that could overflow).
-        const xd = xScale.domain();
-        const yd = yScale.domain();
-        const xr = xScale.range();
-        const yr = yScale.range();
-        const u0 = xLog ? Math.log10(xd[0]) : xd[0];
-        const u1 = xLog ? Math.log10(xd[1]) : xd[1];
-        const t0 = yLog ? Math.log10(yd[0]) : yd[0];
-        const t1 = yLog ? Math.log10(yd[1]) : yd[1];
-        const wToScreenY = (w: number) => yr[0] + ((w - t0) / (t1 - t0)) * (yr[1] - yr[0]);
-
-        ctx.strokeStyle = REGRESSION_LINE_COLOR;
-        ctx.globalAlpha = REGRESSION_LINE_ALPHA;
-        ctx.beginPath();
-        ctx.moveTo(xr[0], wToScreenY(fit.slope * u0 + fit.intercept));
-        ctx.lineTo(xr[1], wToScreenY(fit.slope * u1 + fit.intercept));
-        ctx.stroke();
-
-        // Small r² badge in the cell's top-right corner, only in cells large
-        // enough that it won't clutter the plot area.
-        if (size >= R2_LABEL_MIN_CELL_SIZE) {
-          ctx.font = '9px sans-serif';
-          ctx.fillStyle = REGRESSION_LINE_COLOR;
-          ctx.globalAlpha = 0.8;
-          ctx.textAlign = 'right';
-          ctx.textBaseline = 'top';
-          ctx.fillText(`r²=${fit.r2.toFixed(2)}`, size - padding / 2 - 2, padding / 2 + 2);
-        }
+    // Combined badge in the cell's top-right corner (one line — the r and
+    // r² labels must never overlap), only in cells large enough that it
+    // won't clutter the plot area.
+    if (size >= BADGE_MIN_CELL_SIZE) {
+      const badgeParts: string[] = [];
+      if (showCorrelation && corr) {
+        badgeParts.push(`${correlationMetric === 'spearman' ? 'ρ' : 'r'}=${corr.r.toFixed(2)}`);
+      }
+      if (showRegressionLine && fit) {
+        badgeParts.push(`r²=${fit.r2.toFixed(2)}`);
+      }
+      if (badgeParts.length > 0) {
+        ctx.font = '9px sans-serif';
+        ctx.fillStyle = showRegressionLine && fit ? REGRESSION_LINE_COLOR : CORRELATION_BADGE_COLOR;
+        ctx.globalAlpha = 0.8;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(badgeParts.join('  '), size - padding / 2 - 2, padding / 2 + 2);
       }
     }
 
     ctx.restore();
     ctx.globalAlpha = 1;
-  }, [showIdentityLine, showRegressionLine, size, padding, dataStateHash, filterMode, selectedStateHash]);
+  }, [showIdentityLine, showRegressionLine, showCorrelation, correlationMetric, tintCellBorders, size, padding, dataStateHash, filterMode, selectedStateHash]);
 
   // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
   const dataForStats = useMemo(() => {
@@ -910,6 +1003,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         size,
         showIdentityLine,
         showRegressionLine,
+        showCorrelation,
+        tintCellBorders,
+        correlationMetric,
         colorStateHash: colorState?.hash ?? 'none',
       });
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
@@ -1469,7 +1565,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, showCorrelation, tintCellBorders, correlationMetric, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
 
   return (
     <div

@@ -6,6 +6,26 @@ export function reorderColumns(columns: Column[], dragIndex: number, hoverIndex:
     return newColumns;
 }
 
+/**
+ * Restore a previously saved column ORDER onto the current columns (issue
+ * #36: "restore original order" after sort-by-correlation). Only the order
+ * is taken from `savedOrder`; the column objects themselves come from
+ * `current`, so visibility/scale/name edits made after the sort survive.
+ * Columns not present in the saved order (e.g. PCA columns added later)
+ * keep their relative order and go to the end.
+ */
+export function restoreColumnOrder(current: Column[], savedOrder: Column[]): Column[] {
+    const rank = new Map<string, number>();
+    savedOrder.forEach((col, index) => {
+        if (!rank.has(col.name)) rank.set(col.name, index);
+    });
+    return [...current].sort((a, b) => {
+        const ra = rank.get(a.name) ?? Number.MAX_SAFE_INTEGER;
+        const rb = rank.get(b.name) ?? Number.MAX_SAFE_INTEGER;
+        return ra === rb ? 0 : ra - rb; // stable ties (incl. both-unknown)
+    });
+}
+
 export function filterColumns(columns: Column[], filter: string): Column[] {
     const normalizedFilter = filter.trim().toLowerCase();
 

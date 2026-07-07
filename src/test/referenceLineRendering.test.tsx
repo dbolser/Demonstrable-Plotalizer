@@ -79,4 +79,48 @@ describe('ScatterPlotMatrix reference-line rendering', () => {
         );
         await waitFor(() => expect(getContextMock.mock.calls.length).toBeGreaterThan(callsBefore));
     });
+
+    // Issue #36: the correlation badge / border-tint overlay shares this
+    // paint pass — the full combination (badge + tint + regression line,
+    // Pearson and Spearman, across linear and log axes) must complete.
+    it.each(['pearson', 'spearman'] as const)(
+        'completes a render with correlation badge and border tint enabled (%s)',
+        async (metric) => {
+            const onRenderComplete = vi.fn();
+            render(
+                <DndProvider backend={HTML5Backend}>
+                    <ScatterPlotMatrix
+                        {...makeProps({ onRenderComplete })}
+                        showRegressionLine
+                        showCorrelation
+                        tintCellBorders
+                        correlationMetric={metric}
+                    />
+                </DndProvider>
+            );
+
+            await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+        }
+    );
+
+    it('repaints cells when the correlation toggle flips', async () => {
+        const onRenderComplete = vi.fn();
+        const props = makeProps({ onRenderComplete });
+        const { rerender } = render(
+            <DndProvider backend={HTML5Backend}>
+                <ScatterPlotMatrix {...props} />
+            </DndProvider>
+        );
+        await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+
+        const getContextMock = HTMLCanvasElement.prototype.getContext as unknown as ReturnType<typeof vi.fn>;
+        const callsBefore = getContextMock.mock.calls.length;
+
+        rerender(
+            <DndProvider backend={HTML5Backend}>
+                <ScatterPlotMatrix {...props} showCorrelation />
+            </DndProvider>
+        );
+        await waitFor(() => expect(getContextMock.mock.calls.length).toBeGreaterThan(callsBefore));
+    });
 });
