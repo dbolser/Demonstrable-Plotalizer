@@ -17,6 +17,7 @@ import type { FileHistoryEntry } from './src/utils/fileHistory';
 import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
 import { UrlInput } from './components/UrlInput';
 import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
+import { detectColumnTypes } from './src/utils/columnTypeUtils';
 import { stepCellSize } from './src/utils/zoomUtils';
 import type { PCAVarianceEntry } from './components/ControlPanel';
 import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
@@ -116,20 +117,19 @@ const App: React.FC = () => {
     const dataWithIds = rawData.map((d, i) => ({ ...d, __id: i }));
     setData(dataWithIds);
 
-    // B4: Detect ALL string columns
-    const allStringCols = (result.meta.fields || []).filter(
-      field => typeof rawData[0][field] === 'string'
-    );
+    // B4 + hotfix: detect column types across ALL rows, not just row 0 —
+    // sparse columns (e.g. PCA scores blank in early rows) parse as null
+    // there and were previously dropped from both lists entirely.
+    const detected = detectColumnTypes(dataWithIds, result.meta.fields);
+    const allStringCols = detected.stringColumns;
     setStringColumns(allStringCols);
     setLabelColumn(allStringCols[0] || null);
 
-    const numericColumns = Object.keys(dataWithIds[0])
-      .filter(key => typeof dataWithIds[0][key] === 'number' && key !== '__id')
-      .map(key => ({
-        name: key,
-        scale: 'linear' as ScaleType,
-        visible: true,
-      }));
+    const numericColumns = detected.numericColumns.map(key => ({
+      name: key,
+      scale: 'linear' as ScaleType,
+      visible: true,
+    }));
 
     // Batch 3: Auto-limit columns on large load
     const rows = dataWithIds.length;

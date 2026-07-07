@@ -6,6 +6,7 @@ import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
+import { cellValueToNumber } from '../src/utils/cellValueUtils';
 import { MISSING_COLOR, MISSING_SLOT } from '../src/utils/colorUtils';
 import type { ColorState } from '../src/utils/colorUtils';
 import { buildRenderKey } from '../src/utils/renderKeyUtils';
@@ -347,8 +348,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const dimmedCoords: number[] = [];
 
       for (const d of data) {
-        const x = +d[xCol];
-        const y = +d[yCol];
+        const x = cellValueToNumber(d[xCol]);
+        const y = cellValueToNumber(d[yCol]);
         if (!isFinite(x) || !isFinite(y)) continue;
 
         const screenX = xScale(x);
@@ -392,8 +393,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       data.forEach(d => {
         if (selectedIds.size > 0 && selectedIds.has(d.__id)) return;
 
-        const x = +d[xCol];
-        const y = +d[yCol];
+        const x = cellValueToNumber(d[xCol]);
+        const y = cellValueToNumber(d[yCol]);
         if (!isFinite(x) || !isFinite(y)) return;
 
         const screenX = xScale(x);
@@ -413,8 +414,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       data.forEach(d => {
         if (!selectedIds.has(d.__id)) return;
 
-        const x = +d[xCol];
-        const y = +d[yCol];
+        const x = cellValueToNumber(d[xCol]);
+        const y = cellValueToNumber(d[yCol]);
         if (!isFinite(x) || !isFinite(y)) return;
 
         const screenX = xScale(x);
@@ -597,7 +598,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     for (const row of dataForStats) {
       for (const col of visibleColumns) {
-        const value = +row[col.name];
+        const value = cellValueToNumber(row[col.name]);
         if (!isFinite(value)) continue;
         const columnStat = stats.get(col.name);
         if (!columnStat) continue;
@@ -697,7 +698,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     const createScale = (c: Column, range: [number, number]) => {
       // Force coercion to number and filter out non-finite values
-      const values = data.map(d => +d[c.name]).filter(isFinite);
+      const values = data.map(d => cellValueToNumber(d[c.name])).filter(isFinite);
       const extent = d3.extent(values);
 
       let domain: [number, number] = [0, 1];
@@ -1072,7 +1073,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           // buckets for rainbow). Bins keep row identity so each row lands
           // in its color stack.
           const rowBinGenBase = d3.bin<DataPoint, number>()
-            .value(d => +d[column.name])
+            .value(d => cellValueToNumber(d[column.name]))
             .domain([minDomain, maxDomain]);
           const rowBinGen = Array.isArray(thresholds)
             ? rowBinGenBase.thresholds(thresholds)
@@ -1111,8 +1112,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           return;
         }
 
-        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
+        const allValues = filteredData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
+        const selectedValues = selectedData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
 
         const binGeneratorBase = d3.bin().domain([minDomain, maxDomain]);
         const binGenerator = Array.isArray(thresholds)
@@ -1244,7 +1245,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           // Issue #40: stacked-by-color bars (horizontal); see the bottom
           // histogram block for the full rationale.
           const rowBinGenBase = d3.bin<DataPoint, number>()
-            .value(d => +d[column.name])
+            .value(d => cellValueToNumber(d[column.name]))
             .domain([minDomain, maxDomain]);
           const rowBinGen = Array.isArray(thresholds)
             ? rowBinGenBase.thresholds(thresholds)
@@ -1280,8 +1281,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           return;
         }
 
-        const allValues = filteredData.map(d => +d[column.name]).filter(isFinite);
-        const selectedValues = selectedData.map(d => +d[column.name]).filter(isFinite);
+        const allValues = filteredData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
+        const selectedValues = selectedData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
 
         const binGeneratorBase = d3.bin().domain([minDomain, maxDomain]);
         const binGenerator = Array.isArray(thresholds)

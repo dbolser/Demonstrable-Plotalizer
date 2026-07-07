@@ -10,18 +10,10 @@ import { CATEGORY_PALETTE, MISSING_COLOR, MISSING_SLOT, RAINBOW_BUCKETS } from '
 // merge into one visually identical segment).
 export const RAINBOW_STACK_BINS = 12;
 
-/**
- * Null-safe finite check for a raw cell value, mirroring the guard in
- * computeRainbowSlots. PapaParse (dynamicTyping) stores empty cells as
- * null, and `+null === 0`, so a plain `isFinite(+raw)` would silently bin
- * missing cells as real zero-valued rows instead of excluding them from
- * the histogram.
- */
-export function isFiniteCellValue(raw: number | string | null | undefined): boolean {
-  if (raw === null || raw === undefined) return false;
-  if (typeof raw === 'string' && raw.trim() === '') return false;
-  return Number.isFinite(+raw);
-}
+// Moved to cellValueUtils so non-histogram code (selection grid, scales,
+// point painting) can share the null-safe guard; re-exported for existing
+// import sites.
+export { isFiniteCellValue } from './cellValueUtils';
 
 export interface StackConfig {
   /** Number of color stacks, excluding the trailing missing-value stack. */
