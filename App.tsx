@@ -16,6 +16,7 @@ import type { FileHistoryEntry } from './src/utils/fileHistory';
 import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
 import { UrlInput } from './components/UrlInput';
 import { computePCA, projectPCA, PCA_COLUMN_NAMES } from './src/utils/pca';
+import { stepCellSize } from './src/utils/zoomUtils';
 import type { PCAVarianceEntry } from './components/ControlPanel';
 import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
 
@@ -314,6 +315,25 @@ const App: React.FC = () => {
     setShowColumnGroups(prev => !prev);
   };
 
+  // Issue #57: +/- zoom buttons and keyboard shortcuts step cellSize ~20%.
+  // Wheel-gesture commits arrive through the same setCellSize, so the
+  // ControlPanel slider stays in sync (cellSize is the single source of truth).
+  const handleZoomStep = useCallback((direction: 1 | -1) => {
+    setCellSize(prev => stepCellSize(prev, direction));
+  }, []);
+
+  const handleMatrixKeyDown = useCallback((e: React.KeyboardEvent<HTMLDivElement>) => {
+    // Don't hijack browser shortcuts (e.g. Ctrl/Cmd +/- page zoom) or Alt combos.
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      handleZoomStep(1);
+    } else if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      handleZoomStep(-1);
+    }
+  }, [handleZoomStep]);
+
   const handleRenderComplete = useCallback(() => {
     setIsRecalculating(false);
     setRenderProgress(null);
@@ -582,12 +602,36 @@ const App: React.FC = () => {
             )}
 
             <div
-              className="p-4 overflow-auto"
+              className="p-4 overflow-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-primary"
               style={{
                 flex: tableVisible ? '1 1 auto' : '1 1 0',
                 minHeight: 0
               }}
+              tabIndex={0}
+              onKeyDown={handleMatrixKeyDown}
             >
+              {/* Issue #57: zoom controls — sticky so they stay visible while
+                  the (potentially huge) matrix scrolls beneath them. */}
+              <div className="sticky top-0 left-0 z-20 mb-2 flex w-fit items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleZoomStep(-1)}
+                  aria-label="Zoom out"
+                  title="Zoom out (-)  ·  Ctrl+scroll to zoom"
+                  className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 bg-white/90 text-gray-700 shadow-sm hover:bg-gray-200 font-bold leading-none select-none"
+                >
+                  −
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleZoomStep(1)}
+                  aria-label="Zoom in"
+                  title="Zoom in (+)  ·  Ctrl+scroll to zoom"
+                  className="w-7 h-7 flex items-center justify-center rounded border border-gray-300 bg-white/90 text-gray-700 shadow-sm hover:bg-gray-200 font-bold leading-none select-none"
+                >
+                  +
+                </button>
+              </div>
               <ScatterPlotMatrix
                 data={data}
                 columns={displayColumns}
@@ -601,6 +645,7 @@ const App: React.FC = () => {
                 onPointHover={handlePointHover}
                 onPointLeave={handlePointLeave}
                 cellSize={cellSize}
+                onCellSizeChange={setCellSize}
                 onRenderComplete={handleRenderComplete}
                 onRenderProgress={handleRenderProgress}
               />
