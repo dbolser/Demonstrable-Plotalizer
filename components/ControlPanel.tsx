@@ -336,7 +336,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <input
               type="range"
               id="cellSize"
-              min={80}
+              min={60}
               max={400}
               step={10}
               value={cellSize}

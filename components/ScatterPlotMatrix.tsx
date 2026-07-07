@@ -6,6 +6,7 @@ import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
 import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
+import { createZoomGestureController, isZoomWheelEvent } from '../src/utils/zoomUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -20,6 +21,8 @@ interface ScatterPlotMatrixProps {
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
   cellSize?: number;
+  /** Commit callback for the fluid Ctrl/Cmd+wheel zoom gesture (issue #57). */
+  onCellSizeChange?: (size: number) => void;
   onRenderComplete?: () => void;
   onRenderProgress?: (cellsDone: number, cellsTotal: number) => void;
 }
@@ -127,10 +130,12 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onPointHover,
   onPointLeave,
   cellSize = 150,
+  onCellSizeChange,
   onRenderComplete,
   onRenderProgress,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const canvasRenderKeyRef = useRef<Map<string, string>>(new Map());
@@ -149,6 +154,61 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   });
   const size = cellSize;
   const padding = 20;
+
+  // --- Fluid zoom gesture (issue #57) -------------------------------------
+  // While Ctrl/Cmd+wheel is in flight, the already-painted matrix is scaled
+  // with a CSS transform only (blurry but cheap — no canvas repaints). The
+  // debounced commit then updates cellSize through the normal pipeline for a
+  // single crisp re-render. `zoomGesture` is deliberately NOT a dependency of
+  // the paint effect below, so per-tick updates never retrigger painting.
+  const [zoomGesture, setZoomGesture] = useState<{ scale: number; origin: string } | null>(null);
+  const cellSizeRef = useRef(cellSize);
+  const onCellSizeChangeRef = useRef(onCellSizeChange);
+  useEffect(() => {
+    cellSizeRef.current = cellSize;
+    onCellSizeChangeRef.current = onCellSizeChange;
+  }, [cellSize, onCellSizeChange]);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+
+    // transform-origin is captured at gesture start (near the cursor) and
+    // held for the rest of the gesture so the preview doesn't jump around.
+    let gestureOrigin = '0px 0px';
+
+    const controller = createZoomGestureController({
+      getCellSize: () => cellSizeRef.current,
+      onScaleChange: scale => setZoomGesture({ scale, origin: gestureOrigin }),
+      onCommit: nextCellSize => {
+        setZoomGesture(null);
+        if (nextCellSize !== cellSizeRef.current) {
+          onCellSizeChangeRef.current?.(nextCellSize);
+        }
+      },
+    });
+
+    const handleWheel = (event: WheelEvent) => {
+      // Plain wheel keeps normal scrolling; only Ctrl/Cmd+wheel zooms.
+      if (!isZoomWheelEvent(event)) return;
+      event.preventDefault(); // stop browser page-zoom
+      if (!controller.isActive()) {
+        // Scale is still 1 here, so the rect is untransformed.
+        const rect = el.getBoundingClientRect();
+        gestureOrigin = `${event.clientX - rect.left}px ${event.clientY - rect.top}px`;
+      }
+      controller.wheel(event.deltaY);
+    };
+
+    // Native listener: React attaches wheel handlers passively, which would
+    // make preventDefault() a no-op.
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+      controller.cancel();
+    };
+  }, []);
+  // -------------------------------------------------------------------------
 
   // Tooltip positioning constants
   const TOOLTIP_WIDTH = 200;
@@ -1004,7 +1064,15 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete, onRenderProgress]);
 
   return (
-    <div className="w-full h-full relative">
+    <div
+      ref={rootRef}
+      className="w-full h-full relative"
+      style={zoomGesture ? {
+        transform: `scale(${zoomGesture.scale})`,
+        transformOrigin: zoomGesture.origin,
+        willChange: 'transform',
+      } : undefined}
+    >
       <div
         style={{
           position: 'absolute',
