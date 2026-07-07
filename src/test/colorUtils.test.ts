@@ -166,6 +166,8 @@ describe('render cache key includes color state', () => {
     dataStateHash: 'v1-100-0-99',
     selectedStateHash: 'none',
     size: 150,
+    showIdentityLine: false,
+    showRegressionLine: false,
   };
 
   it('changes the render key when the color mode changes', () => {
