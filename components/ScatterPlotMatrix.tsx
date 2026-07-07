@@ -15,6 +15,9 @@ import {
   buildStackSegments,
   isFiniteCellValue,
 } from '../src/utils/histogramStackUtils';
+import { computeIdentityOverlap, fitRegression } from '../src/utils/referenceLineUtils';
+import type { RegressionFit } from '../src/utils/referenceLineUtils';
+import { createZoomGestureController, isZoomWheelEvent, normalizeWheelDelta } from '../src/utils/zoomUtils';
 
 interface ScatterPlotMatrixProps {
   data: DataPoint[];
@@ -29,6 +32,8 @@ interface ScatterPlotMatrixProps {
   onPointHover: (content: string, event: MouseEvent) => void;
   onPointLeave: () => void;
   cellSize?: number;
+  /** Commit callback for the fluid Ctrl/Cmd+wheel zoom gesture (issue #57). */
+  onCellSizeChange?: (size: number) => void;
   onRenderComplete?: () => void;
   onRenderProgress?: (cellsDone: number, cellsTotal: number) => void;
   /** Precomputed per-row color state, or null for the classic flat colors. */
@@ -40,6 +45,10 @@ interface ScatterPlotMatrixProps {
    * rainbow mode to re-order the gradient by that column's rank.
    */
   onColumnLabelClick?: (columnName: string) => void;
+  /** Draw a dashed y=x identity line in each cell where the domains overlap. */
+  showIdentityLine?: boolean;
+  /** Draw a per-cell least-squares regression line (fit in transformed space). */
+  showRegressionLine?: boolean;
 }
 
 // RAF-budgeted canvas rendering: paint at most this many cells per frame…
@@ -54,6 +63,19 @@ const SNAPSHOT_CAPACITY_PER_CELL = 6;
 const SNAPSHOT_MAX_CELL_SIZE = 300;
 // Overall byte budget across all cells; beyond this, new snapshots are skipped.
 const SNAPSHOT_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
+
+// Reference-line styling (issue #50). Identity: dashed neutral gray;
+// regression: solid dark red at moderate alpha. Both 1px so they read as
+// annotations, not data.
+const IDENTITY_LINE_COLOR = '#9ca3af';
+const REGRESSION_LINE_COLOR = '#b91c1c';
+const REGRESSION_LINE_ALPHA = 0.7;
+// Only draw the small r² label when the cell is big enough for it not to
+// collide with the point cloud/axis ticks.
+const R2_LABEL_MIN_CELL_SIZE = 100;
+// Safety cap on the per-cell regression fit memo (keys include data hash and
+// filter state, so entries go stale; a simple clear keeps memory bounded).
+const REGRESSION_CACHE_MAX_ENTRIES = 512;
 
 interface CoordinateDisplay {
   visible: boolean;
@@ -193,13 +215,17 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onPointHover,
   onPointLeave,
   cellSize = 150,
+  onCellSizeChange,
   onRenderComplete,
   onRenderProgress,
   colorState = null,
   rainbowOrderColumn = null,
   onColumnLabelClick,
+  showIdentityLine = false,
+  showRegressionLine = false,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const canvasElementsRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const canvasRenderKeyRef = useRef<Map<string, string>>(new Map());
@@ -218,6 +244,65 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   });
   const size = cellSize;
   const padding = 20;
+
+  // --- Fluid zoom gesture (issue #57) -------------------------------------
+  // While Ctrl/Cmd+wheel is in flight, the already-painted matrix is scaled
+  // with a CSS transform only (blurry but cheap — no canvas repaints). The
+  // debounced commit then updates cellSize through the normal pipeline for a
+  // single crisp re-render. `zoomGesture` is deliberately NOT a dependency of
+  // the paint effect below, so per-tick updates never retrigger painting.
+  const [zoomGesture, setZoomGesture] = useState<{ scale: number; origin: string } | null>(null);
+  const cellSizeRef = useRef(cellSize);
+  const onCellSizeChangeRef = useRef(onCellSizeChange);
+  useEffect(() => {
+    cellSizeRef.current = cellSize;
+    onCellSizeChangeRef.current = onCellSizeChange;
+  }, [cellSize, onCellSizeChange]);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+
+    // transform-origin is captured at gesture start (near the cursor) and
+    // held for the rest of the gesture so the preview doesn't jump around.
+    let gestureOrigin = '0px 0px';
+
+    const controller = createZoomGestureController({
+      getCellSize: () => cellSizeRef.current,
+      onScaleChange: scale => setZoomGesture({ scale, origin: gestureOrigin }),
+      onCommit: nextCellSize => {
+        setZoomGesture(null);
+        if (nextCellSize !== cellSizeRef.current) {
+          onCellSizeChangeRef.current?.(nextCellSize);
+        }
+      },
+    });
+
+    const handleWheel = (event: WheelEvent) => {
+      // Zoom is disabled without a commit callback — leave the browser's
+      // default Ctrl/Cmd+wheel behavior (page zoom) alone in that case.
+      if (!onCellSizeChangeRef.current) return;
+      // Plain wheel keeps normal scrolling; only Ctrl/Cmd+wheel zooms.
+      if (!isZoomWheelEvent(event)) return;
+      event.preventDefault(); // stop browser page-zoom
+      if (!controller.isActive()) {
+        // Scale is still 1 here, so the rect is untransformed.
+        const rect = el.getBoundingClientRect();
+        gestureOrigin = `${event.clientX - rect.left}px ${event.clientY - rect.top}px`;
+      }
+      // deltaY may be in lines/pages depending on the device (deltaMode).
+      controller.wheel(normalizeWheelDelta(event.deltaY, event.deltaMode));
+    };
+
+    // Native listener: React attaches wheel handlers passively, which would
+    // make preventDefault() a no-op.
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', handleWheel);
+      controller.cancel();
+    };
+  }, []);
+  // -------------------------------------------------------------------------
 
   // Tooltip positioning constants
   const TOOLTIP_WIDTH = 200;
@@ -374,6 +459,126 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   }, [data]);
 
   const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
+
+  // Memoized per-cell regression fits (issue #50): brush-driven repaints in
+  // highlight mode reuse the same fit instead of re-scanning all rows. Keys
+  // fold in everything the fit depends on: column pair, scale types, data
+  // identity, and — in filter mode only, where the fitted subset changes with
+  // the selection — the selection hash.
+  const regressionFitCacheRef = useRef<Map<string, RegressionFit | null>>(new Map());
+
+  // Reference-line overlay pass (issue #50): drawn AFTER the point pass onto
+  // the same canvas, inside the same paint task, so the lines land in the
+  // cached ImageData snapshots too. Deliberately a separate draw step —
+  // it never touches the point-rendering code path.
+  const drawReferenceLines = useCallback((
+    canvas: HTMLCanvasElement,
+    xScale: d3.ScaleLinear<number, number>,
+    yScale: d3.ScaleLinear<number, number>,
+    xColName: string,
+    yColName: string,
+    xLog: boolean,
+    yLog: boolean,
+    cellData: DataPoint[]
+  ) => {
+    if (!showIdentityLine && !showRegressionLine) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.save();
+    // Clip to the cell so out-of-range regression segments never bleed out.
+    ctx.beginPath();
+    ctx.rect(0, 0, size, size);
+    ctx.clip();
+    ctx.lineWidth = 1;
+
+    if (showIdentityLine) {
+      const xd = xScale.domain();
+      const yd = yScale.domain();
+      const overlap = computeIdentityOverlap([xd[0], xd[1]], [yd[0], yd[1]]);
+      if (overlap) {
+        // y=x is only straight in screen space when both axes share a scale
+        // type; under mixed linear/log it curves, so sample it in screen-x
+        // and transform each sample through the cell's own scales.
+        const px0 = xScale(overlap[0]);
+        const px1 = xScale(overlap[1]);
+        const steps = xLog === yLog
+          ? 1
+          : Math.max(2, Math.min(64, Math.ceil(Math.abs(px1 - px0) / 4)));
+
+        ctx.strokeStyle = IDENTITY_LINE_COLOR;
+        ctx.globalAlpha = 0.9;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        for (let s = 0; s <= steps; s++) {
+          const px = px0 + ((px1 - px0) * s) / steps;
+          const v = s === 0 ? overlap[0] : s === steps ? overlap[1] : xScale.invert(px);
+          const py = yScale(v);
+          if (s === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    if (showRegressionLine) {
+      const cache = regressionFitCacheRef.current;
+      const fitKey = [
+        xColName,
+        yColName,
+        xLog ? 'log' : 'linear',
+        yLog ? 'log' : 'linear',
+        dataStateHash,
+        filterMode,
+        filterMode === 'filter' ? selectedStateHash : '-',
+      ].join('|');
+
+      let fit = cache.get(fitKey);
+      if (fit === undefined) {
+        if (cache.size >= REGRESSION_CACHE_MAX_ENTRIES) cache.clear();
+        fit = fitRegression(cellData, xColName, yColName, xLog, yLog);
+        cache.set(fitKey, fit);
+      }
+
+      if (fit) {
+        // The fit lives in transformed space, where both screen axes are
+        // affine — so the line is straight in screen space for every
+        // linear/log combination. Map the transformed endpoints directly
+        // (avoiding a pow(10, w) round-trip that could overflow).
+        const xd = xScale.domain();
+        const yd = yScale.domain();
+        const xr = xScale.range();
+        const yr = yScale.range();
+        const u0 = xLog ? Math.log10(xd[0]) : xd[0];
+        const u1 = xLog ? Math.log10(xd[1]) : xd[1];
+        const t0 = yLog ? Math.log10(yd[0]) : yd[0];
+        const t1 = yLog ? Math.log10(yd[1]) : yd[1];
+        const wToScreenY = (w: number) => yr[0] + ((w - t0) / (t1 - t0)) * (yr[1] - yr[0]);
+
+        ctx.strokeStyle = REGRESSION_LINE_COLOR;
+        ctx.globalAlpha = REGRESSION_LINE_ALPHA;
+        ctx.beginPath();
+        ctx.moveTo(xr[0], wToScreenY(fit.slope * u0 + fit.intercept));
+        ctx.lineTo(xr[1], wToScreenY(fit.slope * u1 + fit.intercept));
+        ctx.stroke();
+
+        // Small r² badge in the cell's top-right corner, only in cells large
+        // enough that it won't clutter the plot area.
+        if (size >= R2_LABEL_MIN_CELL_SIZE) {
+          ctx.font = '9px sans-serif';
+          ctx.fillStyle = REGRESSION_LINE_COLOR;
+          ctx.globalAlpha = 0.8;
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'top';
+          ctx.fillText(`r²=${fit.r2.toFixed(2)}`, size - padding / 2 - 2, padding / 2 + 2);
+        }
+      }
+    }
+
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }, [showIdentityLine, showRegressionLine, size, padding, dataStateHash, filterMode, selectedStateHash]);
 
   // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
   const dataForStats = useMemo(() => {
@@ -634,6 +839,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       yScale: d3.ScaleLinear<number, number>;
       xColName: string;
       yColName: string;
+      xLog: boolean;
+      yLog: boolean;
     }
     const paintTasks: PaintTask[] = [];
 
@@ -688,6 +895,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         dataStateHash,
         selectedStateHash,
         size,
+        showIdentityLine,
+        showRegressionLine,
         colorStateHash: colorState?.hash ?? 'none',
       });
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
@@ -712,6 +921,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             yScale: yScales[j],
             xColName: colX.name,
             yColName: colY.name,
+            xLog: colX.scale === 'log',
+            yLog: colY.scale === 'log',
           });
         }
       }
@@ -1199,6 +1410,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           selectedIds,
           filterMode
         );
+        // Reference-line overlay: a separate draw step after the point pass,
+        // still inside the same task so snapshots capture the full cell.
+        drawReferenceLines(
+          task.canvas,
+          task.xScale,
+          task.yScale,
+          task.xColName,
+          task.yColName,
+          task.xLog,
+          task.yLog,
+          filteredData
+        );
         canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
         maybeSnapshot(task);
         tasksDone++;
@@ -1233,10 +1456,18 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
 
   return (
-    <div className="w-full h-full relative">
+    <div
+      ref={rootRef}
+      className="w-full h-full relative"
+      style={zoomGesture ? {
+        transform: `scale(${zoomGesture.scale})`,
+        transformOrigin: zoomGesture.origin,
+        willChange: 'transform',
+      } : undefined}
+    >
       <div
         style={{
           position: 'absolute',
