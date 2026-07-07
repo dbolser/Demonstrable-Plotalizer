@@ -547,7 +547,24 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         entry.fit = fitRegression(cellData, xColName, yColName, xLog, yLog);
       }
       if (needsSpearman && entry.spearman === undefined) {
-        entry.spearman = spearmanCorrelation(cellData, xColName, yColName, xLog, yLog);
+        // Spearman is symmetric — ρ(x,y) === ρ(y,x), and the log-axis row
+        // exclusions are the same either way — so when the transposed cell
+        // has already computed it, reuse that instead of re-running two
+        // O(n log n) rank sorts for the mirror half of the matrix.
+        const mirrorKey = [
+          yColName,
+          xColName,
+          yLog ? 'log' : 'linear',
+          xLog ? 'log' : 'linear',
+          dataStateHash,
+          filterMode,
+          filterMode === 'filter' ? selectedStateHash : '-',
+        ].join('|');
+        const mirrored = cache.get(mirrorKey)?.spearman;
+        entry.spearman =
+          mirrored !== undefined
+            ? mirrored
+            : spearmanCorrelation(cellData, xColName, yColName, xLog, yLog);
       }
       stats = entry;
     }

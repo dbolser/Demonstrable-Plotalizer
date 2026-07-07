@@ -202,13 +202,50 @@ export function sortColumnsByCorrelation(
 
     const visible = visibleSlots.map(slot => columns[slot]);
     const k = visible.length;
+
+    // The pair loop below is O(k²): precompute each column's numeric values
+    // ONCE instead of re-parsing every row per pair. For Spearman, columns
+    // with no missing values additionally precompute their full-column ranks
+    // — the pairwise-complete subset is then the whole column for any pair
+    // of such columns, so the dominant O(n log n) rank sorts are shared
+    // across all their pairs instead of redone k² times.
+    const colValues = visible.map(col => data.map(d => cellValueToNumber(d[col.name])));
+    const colAllFinite = colValues.map(values => values.every(v => isFinite(v)));
+    const colRanks: Array<number[] | null> =
+        kind === 'spearman'
+            ? colValues.map((values, i) => (colAllFinite[i] ? rankTransform(values) : null))
+            : [];
+
+    // Same math as computeCorrelation (Pearson of values, or of ranks), just
+    // fed from the precomputed arrays; only the pairwise-complete subset is
+    // re-gathered — and re-ranked — when either column has missing cells.
+    const pairCorrelation = (i: number, j: number): number | null => {
+        const xsAll = colValues[i];
+        const ysAll = colValues[j];
+        if (colAllFinite[i] && colAllFinite[j]) {
+            return kind === 'spearman'
+                ? pearsonOfArrays(colRanks[i]!, colRanks[j]!)
+                : pearsonOfArrays(xsAll, ysAll);
+        }
+        const xs: number[] = [];
+        const ys: number[] = [];
+        for (let row = 0; row < xsAll.length; row++) {
+            if (!isFinite(xsAll[row]) || !isFinite(ysAll[row])) continue;
+            xs.push(xsAll[row]);
+            ys.push(ysAll[row]);
+        }
+        return kind === 'spearman'
+            ? pearsonOfArrays(rankTransform(xs), rankTransform(ys))
+            : pearsonOfArrays(xs, ys);
+    };
+
     const sums = new Array<number>(k).fill(0);
     const counts = new Array<number>(k).fill(0);
     for (let i = 0; i < k; i++) {
         for (let j = i + 1; j < k; j++) {
-            const result = computeCorrelation(data, visible[i].name, visible[j].name, kind);
-            if (result === null) continue;
-            const absR = Math.abs(result.r);
+            const r = pairCorrelation(i, j);
+            if (r === null) continue;
+            const absR = Math.abs(r);
             sums[i] += absR;
             counts[i]++;
             sums[j] += absR;

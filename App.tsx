@@ -426,6 +426,10 @@ const App: React.FC = () => {
     );
     const sorted = sortColumnsByCorrelation(columns, data, correlationMetric, visibleNames);
     if (sorted === columns) return; // fewer than 2 visible columns
+    // Order unchanged (already sorted): skip the state update — setColumns
+    // would re-render the whole matrix — and don't arm a no-op "Restore
+    // order". Element identity suffices: the sort reuses the Column objects.
+    if (sorted.every((col, index) => col === columns[index])) return;
     setPreSortColumns(prev => prev ?? columns);
     setColumns(sorted);
   }, [columns, displayColumns, data, correlationMetric]);
