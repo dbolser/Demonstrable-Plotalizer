@@ -29,6 +29,7 @@ const App: React.FC = () => {
   const [globalLogScale, setGlobalLogScale] = useState<boolean>(false);
   const [columnFilter, setColumnFilter] = useState<string>('');
   const [isRecalculating, setIsRecalculating] = useState<boolean>(false);
+  const [renderProgress, setRenderProgress] = useState<{ done: number; total: number } | null>(null);
   const [columnLimitNotice, setColumnLimitNotice] = useState<string | null>(null);
   const [cellSize, setCellSize] = useState<number>(150);
   const [showColumnGroups, setShowColumnGroups] = useState<boolean>(false);
@@ -68,10 +69,8 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Parse CSV and apply data — separated from handleDataLoaded so the loading
-  // indicator can paint before the heavy state updates trigger D3 work.
-  const applyParsedData = useCallback((csvText: string) => {
-    const result = Papa.parse<DataPoint>(csvText, { header: true, dynamicTyping: true, skipEmptyLines: true });
+  // Apply a completed parse result to app state.
+  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>) => {
     if (result.errors.length > 0) {
       console.error("CSV Parsing errors:", result.errors);
       alert("Error parsing CSV file. Check console for details.");
@@ -136,13 +135,23 @@ const App: React.FC = () => {
   }, []);
 
   const handleDataLoaded = useCallback((csvText: string) => {
-    // Show the indicator first, then defer heavy work to next frame so the
-    // browser can actually paint the "Recalculating…" pill before D3 blocks.
+    // Show the indicator first; parsing happens in a Web Worker (PapaParse
+    // worker: true) so the main thread stays free to paint the
+    // "Recalculating…" pill and keep the UI responsive. PapaParse silently
+    // falls back to synchronous parsing where Workers are unavailable
+    // (e.g. jsdom tests), so defer to the next frame to let the pill paint
+    // in that case too.
     setIsRecalculating(true);
     requestAnimationFrame(() => {
-      applyParsedData(csvText);
+      Papa.parse<DataPoint>(csvText, {
+        header: true,
+        dynamicTyping: true,
+        skipEmptyLines: true,
+        worker: true,
+        complete: applyParseResult,
+      });
     });
-  }, [applyParsedData]);
+  }, [applyParseResult]);
 
   const loadSampleData = useCallback(() => {
     const sampleDataUrl = `${import.meta.env.BASE_URL}data/sample.csv`;
@@ -244,12 +253,21 @@ const App: React.FC = () => {
 
   const handleRenderComplete = useCallback(() => {
     setIsRecalculating(false);
+    setRenderProgress(null);
   }, []);
 
-  // Compute data to show in the table (only selected points if there's a selection)
-  const tableData = brushSelection?.selectedIds
-    ? data.filter(row => brushSelection.selectedIds.has(row.__id))
-    : [];
+  const handleRenderProgress = useCallback((done: number, total: number) => {
+    setRenderProgress(total > 0 ? { done, total } : null);
+  }, []);
+
+  // Compute data to show in the table (only selected points if there's a selection).
+  // Memoized so per-frame render-progress updates don't re-filter large datasets.
+  const tableData = useMemo(
+    () => brushSelection?.selectedIds
+      ? data.filter(row => brushSelection.selectedIds.has(row.__id))
+      : [],
+    [brushSelection, data]
+  );
 
   // B3: Resizable table panel — fixed drag logic
   const [tableHeight, setTableHeight] = useState(300);
@@ -293,7 +311,7 @@ const App: React.FC = () => {
   // Global loading indicator — visible in both empty and main views
   const loadingPill = isRecalculating && (
     <div className="fixed top-4 right-4 z-50 px-4 py-2 bg-brand-primary text-white text-sm font-semibold rounded-full shadow-lg animate-pulse pointer-events-none">
-      Recalculating…
+      Recalculating…{renderProgress ? ` ${renderProgress.done}/${renderProgress.total} cells` : ''}
     </div>
   );
 
@@ -404,6 +422,7 @@ const App: React.FC = () => {
                 onPointLeave={handlePointLeave}
                 cellSize={cellSize}
                 onRenderComplete={handleRenderComplete}
+                onRenderProgress={handleRenderProgress}
               />
             </div>
             {tableData.length > 0 && (

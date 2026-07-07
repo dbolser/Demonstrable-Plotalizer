@@ -20,7 +20,13 @@ interface ScatterPlotMatrixProps {
   onPointLeave: () => void;
   cellSize?: number;
   onRenderComplete?: () => void;
+  onRenderProgress?: (cellsDone: number, cellsTotal: number) => void;
 }
+
+// RAF-budgeted canvas rendering: paint at most this many cells per frame…
+const CELLS_PER_FRAME = 4;
+// …or stop early once this much of the frame has been spent painting.
+const FRAME_BUDGET_MS = 12;
 
 interface CoordinateDisplay {
   visible: boolean;
@@ -113,6 +119,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   onPointLeave,
   cellSize = 150,
   onRenderComplete,
+  onRenderProgress,
 }) => {
   const ref = useRef<SVGSVGElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -462,6 +469,20 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     const activeCanvases = new Set<string>();
     const container = canvasContainerRef.current;
 
+    // Collect cells that need repainting instead of painting them
+    // synchronously; they are painted in RAF-budgeted chunks below so the
+    // main thread stays responsive during large renders.
+    interface PaintTask {
+      canvas: HTMLCanvasElement;
+      canvasKey: string;
+      renderKey: string;
+      xScale: d3.ScaleLinear<number, number>;
+      yScale: d3.ScaleLinear<number, number>;
+      xColName: string;
+      yColName: string;
+    }
+    const paintTasks: PaintTask[] = [];
+
     brushableCells.each(function ([i, j]) {
       const i_original = visibleIndexToOriginalIndex.get(i);
       const j_original = visibleIndexToOriginalIndex.get(j);
@@ -501,17 +522,15 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       const previousKey = canvasRenderKeyRef.current.get(canvasKey);
 
       if (!isDraggingRef.current && previousKey !== renderKey) {
-        renderPointsToCanvas(
+        paintTasks.push({
           canvas,
-          filteredData,
-          xScales[i],
-          yScales[j],
-          colX.name,
-          colY.name,
-          selectedIds,
-          filterMode
-        );
-        canvasRenderKeyRef.current.set(canvasKey, renderKey);
+          canvasKey,
+          renderKey,
+          xScale: xScales[i],
+          yScale: yScales[j],
+          xColName: colX.name,
+          yColName: colY.name,
+        });
       }
     });
 
@@ -839,13 +858,73 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-    // Signal that render is complete (after browser paints)
-    const timeoutId = setTimeout(() => onRenderComplete?.(), 0);
+    // Paint the queued cells in RAF-budgeted chunks (~CELLS_PER_FRAME cells
+    // or ~FRAME_BUDGET_MS per frame), then signal completion. The scheduler
+    // is cancelable: if the config changes mid-render (or the component
+    // unmounts) the effect cleanup cancels the pending frame, and because a
+    // cell's render key is only recorded after a successful paint, any
+    // unpainted cells are re-queued by the next effect run — no stale paints.
+    let rafId: number | null = null;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    const totalTasks = paintTasks.length;
+    let tasksDone = 0;
+
+    const paintFrame = () => {
+      rafId = null;
+      if (cancelled) return;
+
+      const frameStart = performance.now();
+      let paintedThisFrame = 0;
+      while (
+        tasksDone < totalTasks &&
+        paintedThisFrame < CELLS_PER_FRAME &&
+        performance.now() - frameStart < FRAME_BUDGET_MS
+      ) {
+        const task = paintTasks[tasksDone];
+        renderPointsToCanvas(
+          task.canvas,
+          filteredData,
+          task.xScale,
+          task.yScale,
+          task.xColName,
+          task.yColName,
+          selectedIds,
+          filterMode
+        );
+        canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
+        tasksDone++;
+        paintedThisFrame++;
+      }
+
+      // Only stream progress for multi-frame renders; single-frame paints
+      // finish before the indicator could usefully update.
+      if (totalTasks > CELLS_PER_FRAME) {
+        onRenderProgress?.(tasksDone, totalTasks);
+      }
+
+      if (tasksDone < totalTasks) {
+        rafId = requestAnimationFrame(paintFrame);
+      } else {
+        onRenderComplete?.();
+      }
+    };
+
+    if (totalTasks > 0) {
+      rafId = requestAnimationFrame(paintFrame);
+    } else {
+      // Nothing to paint — signal completion after the browser paints,
+      // matching the previous synchronous behavior.
+      timeoutId = setTimeout(() => onRenderComplete?.(), 0);
+    }
 
     return () => {
-      clearTimeout(timeoutId);
+      cancelled = true;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete]);
+  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, onRenderComplete, onRenderProgress]);
 
   return (
     <div className="w-full h-full relative">
