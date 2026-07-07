@@ -13,6 +13,8 @@ import { reorderColumns, filterColumns } from './src/utils/columnUtils';
 import { detectColumnGroups } from './src/utils/groupUtils';
 import { saveFile, getHistory, deleteEntry } from './src/utils/fileHistory';
 import type { FileHistoryEntry } from './src/utils/fileHistory';
+import { fetchCsvFromUrl, getDataUrlFromQuery } from './src/utils/urlLoader';
+import { UrlInput } from './components/UrlInput';
 
 const MAX_INITIAL_RENDER_POINTS = 15_000;
 
@@ -34,6 +36,7 @@ const App: React.FC = () => {
   const [showColumnGroups, setShowColumnGroups] = useState<boolean>(false);
   const [columnGroups, setColumnGroups] = useState<Map<string, string[]>>(new Map());
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
+  const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
 
   const [tooltip, setTooltip] = useState<{ visible: boolean; content: string; x: number; y: number }>({
     visible: false,
@@ -159,11 +162,6 @@ const App: React.FC = () => {
       });
   }, [handleDataLoaded]);
 
-  useEffect(() => {
-    loadSampleData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   // File upload handler that also saves to history
   const handleFileUpload = useCallback(async (csvText: string, filename: string) => {
     handleDataLoaded(csvText);
@@ -175,6 +173,31 @@ const App: React.FC = () => {
       console.warn('Could not save to history:', err);
     }
   }, [handleDataLoaded]);
+
+  // Load CSV/TSV from a remote URL; successful loads are recorded in the
+  // file history with the source URL as the name (issue #42).
+  const handleLoadFromUrl = useCallback(async (url: string) => {
+    setUrlLoadError(null);
+    setIsRecalculating(true);
+    try {
+      const csvText = await fetchCsvFromUrl(url);
+      await handleFileUpload(csvText, url);
+    } catch (err) {
+      setIsRecalculating(false);
+      setUrlLoadError(err instanceof Error ? err.message : `Failed to load data from "${url}".`);
+    }
+  }, [handleFileUpload]);
+
+  // On mount: honour a ?data=<url> query param, otherwise load the sample data
+  useEffect(() => {
+    const dataUrl = getDataUrlFromQuery(window.location.search);
+    if (dataUrl) {
+      handleLoadFromUrl(dataUrl);
+    } else {
+      loadSampleData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLoadFromHistory = useCallback((entry: FileHistoryEntry) => {
     handleDataLoaded(entry.csvText);
@@ -297,6 +320,20 @@ const App: React.FC = () => {
     </div>
   );
 
+  // URL load error banner — visible in both empty and main views
+  const urlErrorBanner = urlLoadError && (
+    <div className="mx-4 mt-2 px-4 py-2 bg-red-50 border border-red-300 rounded-lg flex items-center justify-between text-sm text-red-800">
+      <span>{urlLoadError}</span>
+      <button
+        onClick={() => setUrlLoadError(null)}
+        className="ml-3 text-red-600 hover:text-red-800 font-bold"
+        aria-label="Dismiss error"
+      >
+        ✕
+      </button>
+    </div>
+  );
+
   if (!columns.length) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-gray-50 text-gray-700">
@@ -313,6 +350,11 @@ const App: React.FC = () => {
               Load Sample Data
             </button>
           </div>
+          <div className="mt-4 text-left">
+            <p className="text-sm font-medium text-gray-600 mb-1">Or load a CSV/TSV from a URL:</p>
+            <UrlInput onLoadUrl={handleLoadFromUrl} />
+          </div>
+          {urlErrorBanner}
         </div>
       </div>
     );
@@ -347,6 +389,7 @@ const App: React.FC = () => {
               visibleDisplayCount={visibleDisplayCount}
               onColumnUpdate={handleColumnUpdate}
               onDataLoaded={handleFileUpload}
+              onLoadFromUrl={handleLoadFromUrl}
               filterMode={filterMode}
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
@@ -371,6 +414,7 @@ const App: React.FC = () => {
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
             {/* Notices */}
+            {urlErrorBanner}
             {columnLimitNotice && (
               <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
                 <span>{columnLimitNotice}</span>

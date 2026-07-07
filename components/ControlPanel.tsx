@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Column, FilterMode } from '../types';
 import { FileUpload } from './FileUpload';
+import { UrlInput } from './UrlInput';
 import { DownloadIcon } from './icons';
 import type { FileHistoryEntry } from '../src/utils/fileHistory';
 import { formatRelativeTime } from '../src/utils/fileHistory';
@@ -10,6 +11,7 @@ interface ControlPanelProps {
   visibleDisplayCount: number;
   onColumnUpdate: (index: number, updatedColumn: Column) => void;
   onDataLoaded: (data: string, filename: string) => void;
+  onLoadFromUrl: (url: string) => void;
   filterMode: FilterMode;
   setFilterMode: (mode: FilterMode) => void;
   showHistograms: boolean;
@@ -37,6 +39,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   visibleDisplayCount,
   onColumnUpdate,
   onDataLoaded,
+  onLoadFromUrl,
   filterMode,
   setFilterMode,
   showHistograms,
@@ -204,6 +207,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       <div>
         <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Data Source</h2>
         <FileUpload onDataLoaded={onDataLoaded} />
+        <div className="mt-3">
+          <p className="text-xs font-medium text-gray-500 mb-1">Load from URL</p>
+          <UrlInput onLoadUrl={onLoadFromUrl} />
+        </div>
         {stringColumns.length > 0 && (
           <p className="text-xs text-gray-500 mt-2">
             Label column{stringColumns.length > 1 ? 's' : ''}: {stringColumns.map(c => `"${c}"`).join(', ')}
