@@ -69,17 +69,27 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof ControlPanel
   return { ...render(<ControlPanel {...props} />), props };
 }
 
+// The Facets panel section starts collapsed unless a facet is active (#58),
+// so tests exercising an inactive panel expand the section header first.
+function expandFacetsSection(utils: ReturnType<typeof render>) {
+  fireEvent.click(utils.getByRole('button', { name: /^Facets/ }));
+}
+
 describe('ControlPanel Facets section', () => {
   it('renders the section with a collapsed entry per category column', () => {
-    const { getByTestId, getByText, queryByText } = renderPanel();
+    const utils = renderPanel();
+    const { getByTestId, getByText, queryByText } = utils;
     expect(getByTestId('facets-section')).toBeTruthy();
+    expandFacetsSection(utils);
     expect(getByText('species')).toBeTruthy();
     // Collapsed by default: value checkboxes not rendered yet
     expect(queryByText(/setosa/)).toBeNull();
   });
 
   it('expanding a column shows values with counts and missing entry, and toggling fires the handler', () => {
-    const { getByText, getByTestId, props } = renderPanel();
+    const utils = renderPanel();
+    const { getByText, getByTestId, props } = utils;
+    expandFacetsSection(utils);
     fireEvent.click(getByText('species'));
 
     const section = within(getByTestId('facets-section'));
@@ -95,7 +105,9 @@ describe('ControlPanel Facets section', () => {
   });
 
   it('All / None shortcuts call onSetColumnFacet with every value / null', () => {
-    const { getByText, getByTestId, props } = renderPanel();
+    const utils = renderPanel();
+    const { getByText, getByTestId, props } = utils;
+    expandFacetsSection(utils);
     fireEvent.click(getByText('species'));
     const section = within(getByTestId('facets-section'));
 
@@ -133,11 +145,13 @@ describe('ControlPanel Facets section', () => {
       __id: i,
       id_col: `v${i}`,
     }));
-    const { getByText, getByTestId } = renderPanel({
+    const utils = renderPanel({
       stringColumns: ['id_col'],
       facetSummaries: buildFacetSummaries(wide, ['id_col'], new Map()),
     });
+    const { getByText, getByTestId } = utils;
 
+    expandFacetsSection(utils);
     fireEvent.click(getByText('id_col'));
     const section = within(getByTestId('facets-section'));
     expect(
