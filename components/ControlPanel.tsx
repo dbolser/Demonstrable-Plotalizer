@@ -26,6 +26,10 @@ interface ControlPanelProps {
   setUseUniformLogBins: (useUniform: boolean) => void;
   globalLogScale: boolean;
   onToggleGlobalLogScale: (useLog: boolean) => void;
+  showIdentityLine: boolean;
+  setShowIdentityLine: (show: boolean) => void;
+  showRegressionLine: boolean;
+  setShowRegressionLine: (show: boolean) => void;
   stringColumns: string[];
   columnFilter: string;
   onColumnFilterChange: (filter: string) => void;
@@ -57,6 +61,10 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setUseUniformLogBins,
   globalLogScale,
   onToggleGlobalLogScale,
+  showIdentityLine,
+  setShowIdentityLine,
+  showRegressionLine,
+  setShowRegressionLine,
   stringColumns,
   columnFilter,
   onColumnFilterChange,
@@ -327,6 +335,31 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               onChange={(e) => onToggleGlobalLogScale(e.target.checked)}
               className="h-5 w-5 rounded text-brand-primary focus:ring-brand-secondary"
             />
+          </div>
+          <div>
+            <span className="font-semibold text-gray-700 text-sm">Reference Lines</span>
+            <div className="mt-1 space-y-1">
+              <div className="flex items-center justify-between">
+                <label htmlFor="showIdentityLine" className="text-sm text-gray-600">x = y (identity)</label>
+                <input
+                  type="checkbox"
+                  id="showIdentityLine"
+                  checked={showIdentityLine}
+                  onChange={(e) => setShowIdentityLine(e.target.checked)}
+                  className="h-4 w-4 rounded text-brand-primary focus:ring-brand-secondary"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <label htmlFor="showRegressionLine" className="text-sm text-gray-600">Regression</label>
+                <input
+                  type="checkbox"
+                  id="showRegressionLine"
+                  checked={showRegressionLine}
+                  onChange={(e) => setShowRegressionLine(e.target.checked)}
+                  className="h-4 w-4 rounded text-brand-primary focus:ring-brand-secondary"
+                />
+              </div>
+            </div>
           </div>
           <div>
             <div className="flex items-center justify-between mb-1">
