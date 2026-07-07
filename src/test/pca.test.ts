@@ -153,6 +153,30 @@ describe('computePCA', () => {
     expect(scores[0][2]).toBeCloseTo(1 / Math.SQRT2, 8);
   });
 
+  it('handles sparse arrays / undefined rows without throwing', () => {
+    const data = makeData([
+      { x: 1, y: 2 },
+      { x: 2, y: 4 },
+      { x: 3, y: 6 },
+      { x: 4, y: 8 },
+    ]);
+    // Simulate a sparse/undefined entry (e.g. a hole in the array).
+    (data as (DataPoint | undefined)[])[2] = undefined;
+
+    const result = computePCA(data, ['x', 'y']);
+    expect(result).not.toBeNull();
+    // The undefined row is treated as incomplete and excluded from the fit.
+    expect(result!.fittedRowCount).toBe(3);
+
+    // Projection still yields a finite (fully mean-imputed => 0) score.
+    const scores = projectPCA(data, result!, 2);
+    expect(scores[0].length).toBe(4);
+    expect(scores[0][2]).toBe(0);
+    for (let i = 0; i < 4; i++) {
+      expect(Number.isFinite(scores[0][i])).toBe(true);
+    }
+  });
+
   it('skips zero-variance columns', () => {
     const data = makeData([
       { x: 1, y: 2, constant: 7 },

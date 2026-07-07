@@ -153,10 +153,11 @@ export function computePCA(data: DataPoint[], columnNames: string[]): PCAResult 
   const rowComplete = new Uint8Array(n);
   for (let i = 0; i < n; i++) {
     const row = data[i];
-    let complete = 1;
+    // Guard against sparse arrays / undefined rows: treat them as incomplete.
+    let complete = row ? 1 : 0;
     const base = i * dAll;
     for (let j = 0; j < dAll; j++) {
-      const value = toFiniteNumber(row[columnNames[j]]);
+      const value = row ? toFiniteNumber(row[columnNames[j]]) : NaN;
       raw[base + j] = value;
       if (Number.isNaN(value)) complete = 0;
     }
@@ -277,7 +278,8 @@ export function projectPCA(
   for (let i = 0; i < n; i++) {
     const row = data[i];
     for (let j = 0; j < d; j++) {
-      const value = toFiniteNumber(row[result.columnNames[j]]);
+      // Guard against sparse arrays / undefined rows: mean-impute (z = 0).
+      const value = row ? toFiniteNumber(row[result.columnNames[j]]) : NaN;
       // Mean imputation: a missing value standardizes to exactly 0.
       zRow[j] = Number.isNaN(value) ? 0 : (value - result.means[j]) / result.stds[j];
     }

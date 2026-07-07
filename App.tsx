@@ -252,9 +252,11 @@ const App: React.FC = () => {
 
   // Issue #38: PCA over the currently visible numeric columns. PC1..PC3 are
   // appended as derived columns; clicking again recomputes and replaces them.
+  // Uses displayColumns (same set the matrix renders) so an active column
+  // filter also constrains which columns feed the PCA fit.
   const handleAddPCA = useCallback(() => {
     const pcNameSet = new Set<string>(PCA_COLUMN_NAMES);
-    const inputColumnNames = columns
+    const inputColumnNames = displayColumns
       .filter(col => col.visible && !pcNameSet.has(col.name))
       .map(col => col.name);
 
@@ -282,7 +284,7 @@ const App: React.FC = () => {
       name,
       ratio: result.explainedVarianceRatios[k],
     })));
-  }, [data, columns]);
+  }, [data, displayColumns]);
 
   // Compute data to show in the table (only selected points if there's a selection)
   const tableData = brushSelection?.selectedIds
