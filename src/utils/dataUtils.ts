@@ -1,4 +1,4 @@
-import type { DataPoint, FilterMode } from '../types';
+import type { DataPoint, FilterMode } from '../../types';
 
 export function filterData(
     data: DataPoint[],
