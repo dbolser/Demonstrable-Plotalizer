@@ -1,39 +1,48 @@
-/**
- * Builder for a scatter cell's render key. The key identifies everything
- * that affects the pixels of one cell canvas: if any input changes, the key
- * changes, invalidating both the per-canvas "already painted" check and the
- * ImageData LRU snapshot lookup in ScatterPlotMatrix.
- *
- * Anything new that changes cell pixels (e.g. reference-line toggles) MUST
- * be folded in here — a stale key would resurrect stale pixels from cache.
- */
-export interface CellRenderKeyParams {
-    xColName: string;
-    yColName: string;
-    xScaleType: string;
-    yScaleType: string;
-    filterMode: string;
-    dataStateHash: string;
-    selectedStateHash: string;
-    size: number;
-    showIdentityLine: boolean;
-    showRegressionLine: boolean;
+export interface RenderKeyParts {
+  xColName: string;
+  yColName: string;
+  xScale: string;
+  yScale: string;
+  filterMode: string;
+  dataStateHash: string;
+  selectedStateHash: string;
+  size: number;
+  /** Identity (y = x) reference line toggle. */
+  showIdentityLine: boolean;
+  /** Least-squares regression line toggle. */
+  showRegressionLine: boolean;
+  /** From computeColorStateHash / ColorState.hash; 'none' when no coloring. */
+  colorStateHash: string;
 }
 
-export function buildCellRenderKey(p: CellRenderKeyParams): string {
-    const refLines = `ref${p.showIdentityLine ? 1 : 0}${p.showRegressionLine ? 1 : 0}`;
-    // Join with a control character that cannot appear in CSV column names:
-    // a plain "-" would collide for hyphenated columns, e.g.
-    // ("a-b", "c") vs ("a", "b-c"), resurrecting the wrong cached cell image.
-    return [
-        p.xColName,
-        p.yColName,
-        p.xScaleType,
-        p.yScaleType,
-        p.filterMode,
-        p.dataStateHash,
-        p.selectedStateHash,
-        p.size,
-        refLines,
-    ].join('');
+// Field separator for render keys. A control character rather than '-' so
+// user-controlled fragments (CSV column names inside colName / colorStateHash)
+// containing dashes can never shift field boundaries and make two different
+// configurations collide on the same cache key, e.g. ("a-b", "c") vs
+// ("a", "b-c") resurrecting the wrong cached cell image.
+const SEP = '\u0001';
+
+/**
+ * Cache key for a rendered scatter cell. Gates both the "skip repaint"
+ * check and the per-canvas ImageData LRU, so it MUST include every input
+ * that can change the cell's pixels — scales, filter mode, data/selection
+ * state, cell size, reference-line toggles (identity/regression) and the
+ * color state hash (mode + category column + ordering column + palette
+ * version). Anything new that changes cell pixels MUST be folded in here —
+ * a stale key would resurrect stale pixels from cache.
+ */
+export function buildRenderKey(parts: RenderKeyParts): string {
+  const refLines = `ref${parts.showIdentityLine ? 1 : 0}${parts.showRegressionLine ? 1 : 0}`;
+  return [
+    parts.xColName,
+    parts.yColName,
+    parts.xScale,
+    parts.yScale,
+    parts.filterMode,
+    parts.dataStateHash,
+    parts.selectedStateHash,
+    parts.size,
+    refLines,
+    parts.colorStateHash,
+  ].join(SEP);
 }

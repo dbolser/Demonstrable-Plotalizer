@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeIdentityOverlap, fitRegression } from '../utils/referenceLineUtils';
-import { buildCellRenderKey } from '../utils/renderKeyUtils';
-import type { CellRenderKeyParams } from '../utils/renderKeyUtils';
+import { buildRenderKey } from '../utils/renderKeyUtils';
+import type { RenderKeyParts } from '../utils/renderKeyUtils';
 import type { DataPoint } from '../../types';
 
 const rows = (points: Array<[number, number]>): DataPoint[] =>
@@ -137,32 +137,33 @@ describe('fitRegression (numerical stability)', () => {
     });
 });
 
-describe('buildCellRenderKey (reference-line cache correctness)', () => {
-    const base: CellRenderKeyParams = {
+describe('buildRenderKey (reference-line cache correctness)', () => {
+    const base: RenderKeyParts = {
         xColName: 'a',
         yColName: 'b',
-        xScaleType: 'linear',
-        yScaleType: 'log',
+        xScale: 'linear',
+        yScale: 'log',
         filterMode: 'highlight',
         dataStateHash: 'v1-100-0-99',
         selectedStateHash: 'none',
         size: 150,
         showIdentityLine: false,
         showRegressionLine: false,
+        colorStateHash: 'none',
     };
 
     it('is stable for identical inputs', () => {
-        expect(buildCellRenderKey(base)).toBe(buildCellRenderKey({ ...base }));
+        expect(buildRenderKey(base)).toBe(buildRenderKey({ ...base }));
     });
 
     it('changes when the identity-line toggle changes', () => {
-        expect(buildCellRenderKey({ ...base, showIdentityLine: true }))
-            .not.toBe(buildCellRenderKey(base));
+        expect(buildRenderKey({ ...base, showIdentityLine: true }))
+            .not.toBe(buildRenderKey(base));
     });
 
     it('changes when the regression-line toggle changes', () => {
-        expect(buildCellRenderKey({ ...base, showRegressionLine: true }))
-            .not.toBe(buildCellRenderKey(base));
+        expect(buildRenderKey({ ...base, showRegressionLine: true }))
+            .not.toBe(buildRenderKey(base));
     });
 
     it('distinguishes all four toggle combinations', () => {
@@ -173,21 +174,26 @@ describe('buildCellRenderKey (reference-line cache correctness)', () => {
                 [false, true],
                 [true, true],
             ].map(([idn, reg]) =>
-                buildCellRenderKey({ ...base, showIdentityLine: idn, showRegressionLine: reg })
+                buildRenderKey({ ...base, showIdentityLine: idn, showRegressionLine: reg })
             )
         );
         expect(keys.size).toBe(4);
     });
 
     it('does not collide when hyphenated column names shift the field split', () => {
-        expect(buildCellRenderKey({ ...base, xColName: 'a-b', yColName: 'c' }))
-            .not.toBe(buildCellRenderKey({ ...base, xColName: 'a', yColName: 'b-c' }));
+        expect(buildRenderKey({ ...base, xColName: 'a-b', yColName: 'c' }))
+            .not.toBe(buildRenderKey({ ...base, xColName: 'a', yColName: 'b-c' }));
     });
 
     it('still changes with the pre-existing inputs (data, selection, scales, size)', () => {
-        expect(buildCellRenderKey({ ...base, dataStateHash: 'v2-100-0-99' })).not.toBe(buildCellRenderKey(base));
-        expect(buildCellRenderKey({ ...base, selectedStateHash: '5-12345' })).not.toBe(buildCellRenderKey(base));
-        expect(buildCellRenderKey({ ...base, xScaleType: 'log' })).not.toBe(buildCellRenderKey(base));
-        expect(buildCellRenderKey({ ...base, size: 200 })).not.toBe(buildCellRenderKey(base));
+        expect(buildRenderKey({ ...base, dataStateHash: 'v2-100-0-99' })).not.toBe(buildRenderKey(base));
+        expect(buildRenderKey({ ...base, selectedStateHash: '5-12345' })).not.toBe(buildRenderKey(base));
+        expect(buildRenderKey({ ...base, xScale: 'log' })).not.toBe(buildRenderKey(base));
+        expect(buildRenderKey({ ...base, size: 200 })).not.toBe(buildRenderKey(base));
+    });
+
+    it('changes when the color state hash changes', () => {
+        expect(buildRenderKey({ ...base, colorStateHash: 'rainbow||' }))
+            .not.toBe(buildRenderKey(base));
     });
 });

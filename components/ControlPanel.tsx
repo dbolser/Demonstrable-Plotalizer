@@ -1,5 +1,6 @@
 import React from 'react';
-import type { Column, FilterMode } from '../types';
+import type { Column, FilterMode, ColorMode } from '../types';
+import type { ColorState } from '../src/utils/colorUtils';
 import { FileUpload } from './FileUpload';
 import { UrlInput } from './UrlInput';
 import { DownloadIcon } from './icons';
@@ -46,6 +47,13 @@ interface ControlPanelProps {
   onDeleteFromHistory: (id: number) => void;
   onAddPCA: () => void;
   pcaVariance: PCAVarianceEntry[] | null;
+  colorMode: ColorMode;
+  setColorMode: (mode: ColorMode) => void;
+  categoryColorColumn: string | null;
+  setCategoryColorColumn: (column: string | null) => void;
+  rainbowOrderColumn: string | null;
+  onResetRainbowOrder: () => void;
+  colorState: ColorState | null;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -83,6 +91,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onDeleteFromHistory,
   onAddPCA,
   pcaVariance,
+  colorMode,
+  setColorMode,
+  categoryColorColumn,
+  setCategoryColorColumn,
+  rainbowOrderColumn,
+  onResetRainbowOrder,
+  colorState,
 }) => {
 
   const handleDownloadSVG = () => {
@@ -398,6 +413,99 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             <DownloadIcon className="h-5 w-5" />
             <span>Download SVG</span>
           </button>
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-lg font-bold text-brand-dark mb-3 border-b pb-2">Color</h2>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <label htmlFor="colorMode" className="font-semibold text-gray-700">Color By</label>
+            <select
+              id="colorMode"
+              value={colorMode}
+              onChange={(e) => setColorMode(e.target.value as ColorMode)}
+              className="p-1 border rounded-md shadow-sm focus:ring-brand-secondary focus:border-brand-secondary"
+            >
+              <option value="none">None</option>
+              <option value="category" disabled={stringColumns.length === 0}>Category</option>
+              <option value="rainbow">Rainbow</option>
+            </select>
+          </div>
+
+          {colorMode === 'category' && (
+            <div>
+              <label htmlFor="categoryColorColumn" className="block text-sm font-medium text-gray-700 mb-1">
+                Category column
+              </label>
+              <select
+                id="categoryColorColumn"
+                value={categoryColorColumn ?? ''}
+                onChange={(e) => setCategoryColorColumn(e.target.value || null)}
+                className="w-full p-1 border rounded-md shadow-sm focus:ring-brand-secondary focus:border-brand-secondary text-sm"
+              >
+                <option value="">Choose a column…</option>
+                {stringColumns.map(name => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+              {colorState?.categories && colorState.categories.length > 0 && (
+                <div className="mt-2 space-y-1" data-testid="category-legend">
+                  {colorState.categories.slice(0, 15).map(entry => (
+                    <div key={entry.name} className="flex items-center text-xs text-gray-700">
+                      <span
+                        className="inline-block w-3 h-3 rounded-sm mr-2 flex-shrink-0"
+                        style={{ backgroundColor: entry.color }}
+                        aria-hidden="true"
+                      />
+                      <span className="truncate" title={entry.name}>{entry.name}</span>
+                    </div>
+                  ))}
+                  {colorState.categories.length > 15 && (
+                    <p className="text-xs text-gray-500">
+                      +{colorState.categories.length - 15} more (colors repeat every 10 categories)
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {colorMode === 'rainbow' && colorState && (
+            <div>
+              <div
+                className="h-3 w-full rounded"
+                data-testid="rainbow-legend"
+                style={{
+                  background: `linear-gradient(to right, ${colorState.slotColors
+                    .filter((_, i) => i % 8 === 0 || i === colorState.slotColors.length - 1)
+                    .join(', ')})`,
+                }}
+              />
+              <div className="flex justify-between text-[10px] text-gray-500 mt-0.5">
+                <span>{rainbowOrderColumn ? 'lowest' : 'first row'}</span>
+                <span>{rainbowOrderColumn ? 'highest' : 'last row'}</span>
+              </div>
+              <p className="text-xs text-gray-600 mt-2">
+                Order:{' '}
+                {rainbowOrderColumn
+                  ? <>ranked by <span className="font-semibold text-purple-700">{rainbowOrderColumn}</span></>
+                  : <span className="font-semibold">file order</span>}
+              </p>
+              {rainbowOrderColumn ? (
+                <button
+                  onClick={onResetRainbowOrder}
+                  className="mt-1 text-xs px-2 py-1 rounded border border-gray-300 text-gray-600 hover:border-brand-primary hover:text-brand-primary transition-colors"
+                >
+                  Reset to file order
+                </button>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">
+                  Tip: click a column label on the matrix diagonal to order the gradient by that column's rank. Rows with missing values are shown in gray.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
