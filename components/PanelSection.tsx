@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useId, useState } from 'react';
 
 interface PanelSectionProps {
   title: string;
@@ -26,13 +26,21 @@ export const PanelSection: React.FC<PanelSectionProps> = ({
   children,
 }) => {
   const [open, setOpen] = useState(defaultOpen);
+  // Stable ids so assistive tech can associate the header button with the
+  // content region (aria-controls) and name the section landmark
+  // (aria-labelledby). useId avoids collisions between same-titled sections.
+  const id = useId();
+  const headerId = `${id}-header`;
+  const contentId = `${id}-content`;
 
   return (
-    <section data-testid={testId}>
+    <section data-testid={testId} aria-labelledby={headerId}>
       <button
         type="button"
+        id={headerId}
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
+        aria-controls={contentId}
         className="w-full flex items-center justify-between text-left border-b pb-2 mb-3 focus:outline-none focus:ring-2 focus:ring-brand-secondary rounded-sm"
       >
         <span className="text-lg font-bold text-brand-dark flex items-center min-w-0">
@@ -48,7 +56,9 @@ export const PanelSection: React.FC<PanelSectionProps> = ({
           </span>
         )}
       </button>
-      {open && children}
+      {/* The region element stays mounted so aria-controls always resolves;
+          children themselves are still unmounted while collapsed. */}
+      <div id={contentId}>{open && children}</div>
     </section>
   );
 };
