@@ -48,6 +48,76 @@ export function createSpatialGrid(
     return grid;
 }
 
+/**
+ * Columnar variant of createSpatialGrid: bins store-row indices instead of
+ * row objects, reading coordinates straight from per-column Float64Arrays
+ * (NaN = missing, skipped). Flat gridSize×gridSize layout, cell (gx, gy) at
+ * index gx * gridSize + gy.
+ */
+export function createSpatialGridFromColumns(
+    xValues: Float64Array,
+    yValues: Float64Array,
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    size: number,
+    gridSize = 20
+): number[][] {
+    const grid: number[][] = Array.from({ length: gridSize * gridSize }, () => []);
+    for (let i = 0; i < xValues.length; i++) {
+        const x = xValues[i];
+        const y = yValues[i];
+        // NaN self-compare: missing cells never enter the grid.
+        if (x !== x || y !== y) continue;
+        const sx = xScale(x);
+        const sy = yScale(y);
+        const gx = Math.floor((sx / size) * gridSize);
+        const gy = Math.floor((sy / size) * gridSize);
+        if (gx >= 0 && gx < gridSize && gy >= 0 && gy < gridSize) {
+            grid[gx * gridSize + gy].push(i);
+        }
+    }
+    return grid;
+}
+
+/**
+ * Columnar variant of getPointsInBrush: queries a grid of store-row indices
+ * and maps hits back to __ids via rowIds.
+ */
+export function getPointsInBrushFromColumns(
+    grid: number[][],
+    xValues: Float64Array,
+    yValues: Float64Array,
+    rowIds: Int32Array,
+    xScale: (v: number) => number,
+    yScale: (v: number) => number,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    size: number,
+    gridSize = 20
+): Set<number> {
+    const selected = new Set<number>();
+    const startGX = Math.max(0, Math.floor((x0 / size) * gridSize));
+    const endGX = Math.min(gridSize - 1, Math.ceil((x1 / size) * gridSize));
+    const startGY = Math.max(0, Math.floor((y0 / size) * gridSize));
+    const endGY = Math.min(gridSize - 1, Math.ceil((y1 / size) * gridSize));
+    for (let gx = startGX; gx <= endGX; gx++) {
+        for (let gy = startGY; gy <= endGY; gy++) {
+            const cell = grid[gx * gridSize + gy];
+            for (let k = 0; k < cell.length; k++) {
+                const i = cell[k];
+                const sx = xScale(xValues[i]);
+                const sy = yScale(yValues[i]);
+                if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) {
+                    selected.add(rowIds[i]);
+                }
+            }
+        }
+    }
+    return selected;
+}
+
 export function getPointsInBrush(
     grid: DataPoint[][][],
     xScale: (v: number) => number,
