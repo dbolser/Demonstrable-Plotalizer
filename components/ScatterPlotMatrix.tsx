@@ -4,7 +4,18 @@ import { useDrag, useDrop } from 'react-dnd';
 import type { DataPoint, Column, BrushSelection, FilterMode } from '../types';
 import { mapVisibleColumns } from '../src/utils/columnUtils';
 import { filterData } from '../src/utils/dataUtils';
-import { computeSelectedStateHash, createSpatialGrid, getPointsInBrush } from '../src/utils/selectionUtils';
+import {
+  computeSelectedStateHash,
+  createSpatialGridFromColumns,
+  getPointsInBrushFromColumns,
+} from '../src/utils/selectionUtils';
+import {
+  buildColumnStore,
+  buildSelectedFlags,
+  computeVectorStats,
+  collectFiniteValues,
+  selectIdsInValueRange,
+} from '../src/utils/columnStore';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
 import { cellValueToNumber } from '../src/utils/cellValueUtils';
 import { MISSING_COLOR, MISSING_SLOT } from '../src/utils/colorUtils';
@@ -353,12 +364,48 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
 
-  // Canvas rendering function
-  const renderPointsToCanvas = useCallback((canvas: HTMLCanvasElement, data: DataPoint[], xScale: d3.ScaleLinear<number, number>, yScale: d3.ScaleLinear<number, number>, xCol: string, yCol: string, selectedIds: Set<number>, filterMode: FilterMode) => {
+  // Columnar typed-array store over the rendered dataset: one Float64Array
+  // per column (NaN = missing) plus per-column min/max/minPositive from the
+  // same single build pass. The hot paths below (point paint loops, scale
+  // stats, spatial-grid brush queries, histogram extraction) read this store
+  // instead of walking row objects; the row objects remain the source of
+  // truth everywhere else (stacked histograms, regression fits, table…).
+  // Keyed by column NAMES (not Column identity) so visibility/scale edits —
+  // which produce new Column objects with the same names — never rebuild it.
+  const columnNamesKey = useMemo(() => columns.map(c => c.name).join('\u0001'), [columns]);
+  const columnStore = useMemo(
+    () => buildColumnStore(data, columns.map(c => c.name)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- columnNamesKey stands in for columns
+    [data, columnNamesKey]
+  );
+
+  // Per-store-row selection flags (1 = selected); null when nothing is
+  // selected. O(n) rebuild per selection change, then every paint loop gets
+  // branch-cheap Uint8Array reads instead of Set.has per point per cell.
+  const selectedFlags = useMemo(
+    () => buildSelectedFlags(columnStore, selectedIds),
+    [columnStore, selectedIds]
+  );
+
+  // Canvas rendering function: paints one cell's points from the columnar
+  // store. Iterates store rows (== the matrix's dataset, faceting included);
+  // filter-mode subsetting and highlight-mode dimming are driven by
+  // selectedFlags, matching the previous row-object behavior exactly.
+  const renderPointsToCanvas = useCallback((
+    canvas: HTMLCanvasElement,
+    xValues: Float64Array,
+    yValues: Float64Array,
+    xScale: d3.ScaleLinear<number, number>,
+    yScale: d3.ScaleLinear<number, number>
+  ) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.clearRect(0, 0, size, size);
+
+    const rowCount = columnStore.length;
+    const { rowIds } = columnStore;
+    const hasSelection = selectedFlags !== null;
 
     if (colorState) {
       // Color-by paint path. The per-row color slot was precomputed once per
@@ -369,99 +416,91 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       // regardless of row count.
       const { slotById, slotColors } = colorState;
       const numSlots = slotColors.length;
-      const hasSelection = selectedIds.size > 0;
 
       // Flat coordinate buffers per slot; last bucket = missing/NaN rows.
       const coloredCoords: number[][] = Array.from({ length: numSlots + 1 }, () => []);
-      const selectedCoords: number[][] = hasSelection
-        ? Array.from({ length: numSlots + 1 }, () => [])
-        : coloredCoords;
       const dimmedCoords: number[] = [];
 
-      for (const d of data) {
-        const x = cellValueToNumber(d[xCol]);
-        const y = cellValueToNumber(d[yCol]);
-        if (!isFinite(x) || !isFinite(y)) continue;
+      for (let i = 0; i < rowCount; i++) {
+        const x = xValues[i];
+        const y = yValues[i];
+        // NaN self-compare — store values are finite or NaN by construction.
+        if (x !== x || y !== y) continue;
 
-        const screenX = xScale(x);
-        const screenY = yScale(y);
-        const isSelected = hasSelection && selectedIds.has(d.__id);
-
-        if (hasSelection && !isSelected) {
+        if (hasSelection && !selectedFlags[i]) {
           // Unselected points keep the classic dimmed-gray treatment so the
-          // selection stays readable even with many colors on screen.
-          if (filterMode === 'highlight') dimmedCoords.push(screenX, screenY);
+          // selection stays readable even with many colors on screen; in
+          // filter mode they are hidden entirely.
+          if (filterMode === 'highlight') dimmedCoords.push(xScale(x), yScale(y));
           continue;
         }
 
         // slot is undefined when __id is out of slotById's bounds (e.g. a
         // transient render where colorState lags a data swap); undefined
         // fails both sentinel checks, so guard it explicitly to avoid
-        // selectedCoords[undefined].push crashing the paint loop.
-        const slot = slotById[d.__id];
+        // coloredCoords[undefined].push crashing the paint loop.
+        const slot = slotById[rowIds[i]];
         const bucket = slot === undefined || slot === MISSING_SLOT || slot >= numSlots
           ? numSlots
           : slot;
-        selectedCoords[bucket].push(screenX, screenY);
+        coloredCoords[bucket].push(xScale(x), yScale(y));
       }
 
       drawPointBatch(ctx, dimmedCoords, '#ccc', 0.3);
       const alpha = hasSelection ? 0.8 : 0.7;
       for (let s = 0; s < numSlots; s++) {
-        drawPointBatch(ctx, selectedCoords[s], slotColors[s], alpha);
+        drawPointBatch(ctx, coloredCoords[s], slotColors[s], alpha);
       }
-      drawPointBatch(ctx, selectedCoords[numSlots], MISSING_COLOR, alpha);
+      drawPointBatch(ctx, coloredCoords[numSlots], MISSING_COLOR, alpha);
 
       ctx.globalAlpha = 1;
       return;
     }
 
-    // Render non-selected points first
-    if (filterMode === 'highlight' || selectedIds.size === 0) {
-      ctx.fillStyle = selectedIds.size > 0 ? '#ccc' : '#4b5563';
-      ctx.globalAlpha = selectedIds.size > 0 ? 0.3 : 0.7;
+    // Render non-selected points first. Kept as one arc + fill per point
+    // (not a batched path): with globalAlpha < 1, overlapping points darken
+    // under per-point fills but would not inside a single path — batching
+    // here would visibly change dense clouds.
+    if (filterMode === 'highlight' || !hasSelection) {
+      ctx.fillStyle = hasSelection ? '#ccc' : '#4b5563';
+      ctx.globalAlpha = hasSelection ? 0.3 : 0.7;
 
-      data.forEach(d => {
-        if (selectedIds.size > 0 && selectedIds.has(d.__id)) return;
-
-        const x = cellValueToNumber(d[xCol]);
-        const y = cellValueToNumber(d[yCol]);
-        if (!isFinite(x) || !isFinite(y)) return;
-
-        const screenX = xScale(x);
-        const screenY = yScale(y);
+      for (let i = 0; i < rowCount; i++) {
+        if (hasSelection && selectedFlags[i]) continue;
+        const x = xValues[i];
+        const y = yValues[i];
+        if (x !== x || y !== y) continue;
 
         ctx.beginPath();
-        ctx.arc(screenX, screenY, 2.5, 0, 2 * Math.PI);
+        ctx.arc(xScale(x), yScale(y), 2.5, 0, 2 * Math.PI);
         ctx.fill();
-      });
+      }
     }
 
     // Render selected points on top
-    if (selectedIds.size > 0) {
+    if (hasSelection) {
       ctx.fillStyle = '#1e40af';
       ctx.globalAlpha = 0.8;
 
-      data.forEach(d => {
-        if (!selectedIds.has(d.__id)) return;
-
-        const x = cellValueToNumber(d[xCol]);
-        const y = cellValueToNumber(d[yCol]);
-        if (!isFinite(x) || !isFinite(y)) return;
-
-        const screenX = xScale(x);
-        const screenY = yScale(y);
+      for (let i = 0; i < rowCount; i++) {
+        if (!selectedFlags[i]) continue;
+        const x = xValues[i];
+        const y = yValues[i];
+        if (x !== x || y !== y) continue;
 
         ctx.beginPath();
-        ctx.arc(screenX, screenY, 2.5, 0, 2 * Math.PI);
+        ctx.arc(xScale(x), yScale(y), 2.5, 0, 2 * Math.PI);
         ctx.fill();
-      });
+      }
     }
 
     ctx.globalAlpha = 1;
-  }, [size, colorState]);
+  }, [size, colorState, columnStore, selectedFlags, filterMode]);
 
-  const { filteredData, selectedData } = useMemo(
+  // filteredData still feeds the row-object consumers (stacked histograms,
+  // regression/correlation fits); the point/histogram hot paths read the
+  // columnar store + selectedFlags instead.
+  const { filteredData } = useMemo(
     () => filterData(data, selectedIds, filterMode),
     [data, selectedIds, filterMode]
   );
@@ -674,32 +713,23 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     ctx.globalAlpha = 1;
   }, [showIdentityLine, showRegressionLine, showCorrelation, correlationMetric, tintCellBorders, size, padding, dataStateHash, filterMode, selectedStateHash]);
 
-  // Compute stats from appropriate dataset: filtered data when in filter mode with selection, otherwise full data
-  const dataForStats = useMemo(() => {
-    return (filterMode === 'filter' && selectedIds.size > 0) ? filteredData : data;
-  }, [filterMode, selectedIds.size, filteredData, data]);
-
+  // Scale-domain stats from the columnar store. Full-data stats were already
+  // computed during the store's single build pass; only filter mode with an
+  // active selection needs a (flag-restricted) rescan, matching the previous
+  // "stats over filteredData" behavior.
   const columnStats = useMemo(() => {
     const stats = new Map<string, { min: number; max: number; minPositive: number }>();
+    const flagsForStats = filterMode === 'filter' ? selectedFlags : null;
+
     visibleColumns.forEach(col => {
-      stats.set(col.name, { min: Infinity, max: -Infinity, minPositive: Infinity });
+      const vector = columnStore.columns.get(col.name);
+      stats.set(
+        col.name,
+        vector
+          ? computeVectorStats(vector, flagsForStats)
+          : { min: Infinity, max: -Infinity, minPositive: Infinity }
+      );
     });
-
-    if (visibleColumns.length === 0) {
-      return stats;
-    }
-
-    for (const row of dataForStats) {
-      for (const col of visibleColumns) {
-        const value = cellValueToNumber(row[col.name]);
-        if (!isFinite(value)) continue;
-        const columnStat = stats.get(col.name);
-        if (!columnStat) continue;
-        if (value < columnStat.min) columnStat.min = value;
-        if (value > columnStat.max) columnStat.max = value;
-        if (value > 0 && value < columnStat.minPositive) columnStat.minPositive = value;
-      }
-    }
 
     visibleColumns.forEach(col => {
       const stat = stats.get(col.name);
@@ -714,7 +744,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     });
 
     return stats;
-  }, [dataForStats, visibleColumns]);
+  }, [columnStore, selectedFlags, filterMode, visibleColumns]);
 
   const createScale = useCallback(
     (column: Column, range: [number, number]) => {
@@ -920,9 +950,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const colY = columns[j_original];
         if (!colX || !colY) return;
 
-        // Create spatial grid for fast selection
-        const grid = createSpatialGrid(data, xScales[i_visible], yScales[j_visible], colX.name, colY.name, size);
-        const newSelectedIds = getPointsInBrush(grid, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, colX.name, colY.name, size);
+        // Create spatial grid for fast selection (columnar: typed-array
+        // coordinate reads, no per-row object access)
+        const xVector = columnStore.columns.get(colX.name);
+        const yVector = columnStore.columns.get(colY.name);
+        if (!xVector || !yVector) return;
+        const grid = createSpatialGridFromColumns(xVector.values, yVector.values, xScales[i_visible], yScales[j_visible], size);
+        const newSelectedIds = getPointsInBrushFromColumns(grid, xVector.values, yVector.values, columnStore.rowIds, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, size);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
       });
 
@@ -947,6 +981,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       yColName: string;
       xLog: boolean;
       yLog: boolean;
+      xValues: Float64Array;
+      yValues: Float64Array;
     }
     const paintTasks: PaintTask[] = [];
 
@@ -1022,6 +1058,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           ctx.putImageData(cached, 0, 0);
           canvasRenderKeyRef.current.set(canvasKey, renderKey);
         } else {
+          const xVector = columnStore.columns.get(colX.name);
+          const yVector = columnStore.columns.get(colY.name);
+          if (!xVector || !yVector) return;
           paintTasks.push({
             canvas,
             canvasKey,
@@ -1032,6 +1071,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             yColName: colY.name,
             xLog: colX.scale === 'log',
             yLog: colY.scale === 'log',
+            xValues: xVector.values,
+            yValues: yVector.values,
           });
         }
       }
@@ -1135,14 +1176,14 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           if (!event.selection) { onBrush(null); return; }
 
           const [x0, x1] = event.selection;
-          // Faster selection for histogram brush
-          const newSelectedIds = new Set<number>();
+          // Columnar histogram brush: scan one Float64Array. Missing cells
+          // are NaN and never match (the old `+row[col]` coercion turned
+          // them into 0, silently selecting sparse rows when 0 was in range).
+          const vector = columnStore.columns.get(columns[i_original].name);
+          if (!vector) return;
           const minVal = xScales[i_visible].invert(x0);
           const maxVal = xScales[i_visible].invert(x1);
-          for (const d of data) {
-            const val = +d[columns[i_original].name];
-            if (val >= minVal && val <= maxVal) newSelectedIds.add(d.__id);
-          }
+          const newSelectedIds = selectIdsInValueRange(columnStore, vector, minVal, maxVal);
           onBrush({ indexX: i_original, indexY: columns.length, x0, y0: padding / 2, x1, y1: size - padding / 2, selectedIds: newSelectedIds });
         });
 
@@ -1220,8 +1261,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           return;
         }
 
-        const allValues = filteredData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
-        const selectedValues = selectedData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
+        // Columnar histogram extraction: finite values straight from the
+        // store (filter mode restricts to the selected rows, mirroring the
+        // old filteredData/selectedData row scans).
+        const histVector = columnStore.columns.get(column.name);
+        const allValues = histVector
+          ? collectFiniteValues(histVector, filterMode === 'filter' ? selectedFlags : null)
+          : [];
+        const selectedValues = histVector && selectedFlags
+          ? collectFiniteValues(histVector, selectedFlags)
+          : [];
 
         const binGeneratorBase = d3.bin().domain([minDomain, maxDomain]);
         const binGenerator = Array.isArray(thresholds)
@@ -1309,14 +1358,13 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           if (!event.selection) { onBrush(null); return; }
 
           const [y0, y1] = event.selection;
-          const newSelectedIds = new Set<number>();
-          // Faster selection for Y histogram brush
+          // Columnar histogram brush; see the bottom-histogram handler for
+          // the NaN/missing-cell rationale.
+          const vector = columnStore.columns.get(columns[j_original].name);
+          if (!vector) return;
           const minVal = yScales[j_visible].invert(y1);
           const maxVal = yScales[j_visible].invert(y0);
-          for (const d of data) {
-            const val = +d[columns[j_original].name];
-            if (val >= minVal && val <= maxVal) newSelectedIds.add(d.__id);
-          }
+          const newSelectedIds = selectIdsInValueRange(columnStore, vector, minVal, maxVal);
           onBrush({ indexX: columns.length, indexY: j_original, x0: padding / 2, y0, x1: size - padding / 2, y1, selectedIds: newSelectedIds });
         });
 
@@ -1389,8 +1437,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           return;
         }
 
-        const allValues = filteredData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
-        const selectedValues = selectedData.map(d => cellValueToNumber(d[column.name])).filter(isFinite);
+        // Columnar histogram extraction: finite values straight from the
+        // store (filter mode restricts to the selected rows, mirroring the
+        // old filteredData/selectedData row scans).
+        const histVector = columnStore.columns.get(column.name);
+        const allValues = histVector
+          ? collectFiniteValues(histVector, filterMode === 'filter' ? selectedFlags : null)
+          : [];
+        const selectedValues = histVector && selectedFlags
+          ? collectFiniteValues(histVector, selectedFlags)
+          : [];
 
         const binGeneratorBase = d3.bin().domain([minDomain, maxDomain]);
         const binGenerator = Array.isArray(thresholds)
@@ -1511,13 +1567,10 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const task = paintTasks[tasksDone];
         renderPointsToCanvas(
           task.canvas,
-          filteredData,
+          task.xValues,
+          task.yValues,
           task.xScale,
-          task.yScale,
-          task.xColName,
-          task.yColName,
-          selectedIds,
-          filterMode
+          task.yScale
         );
         // Reference-line overlay: a separate draw step after the point pass,
         // still inside the same task so snapshots capture the full cell.
@@ -1565,7 +1618,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, selectedData, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, showCorrelation, tintCellBorders, correlationMetric, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
+  }, [data, columns, onBrush, filteredData, columnStore, selectedFlags, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, showCorrelation, tintCellBorders, correlationMetric, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
 
   return (
     <div
