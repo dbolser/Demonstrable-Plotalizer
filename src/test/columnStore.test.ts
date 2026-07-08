@@ -140,6 +140,24 @@ describe('buildSelectedFlags / computeVectorStats / collectFiniteValues', () => 
     const stats = computeVectorStats(vec, flags);
     expect(stats.min).toBe(Math.min(...subsetVals));
     expect(stats.max).toBe(Math.max(...subsetVals));
+    expect(stats.minPositive).toBe(Math.min(...subsetVals.filter(v => v > 0)));
+  });
+
+  it('computeVectorStats minPositive over a flagged subset ignores zero/negative values', () => {
+    const negRows: DataPoint[] = [
+      { __id: 0, v: -5 },
+      { __id: 1, v: 0 },
+      { __id: 2, v: 4 },
+      { __id: 3, v: 2 },
+      { __id: 4, v: 0.5 }, // deliberately NOT flagged: must not become minPositive
+    ];
+    const s = buildColumnStore(negRows, ['v']);
+    const flags = buildSelectedFlags(s, new Set([0, 1, 2, 3]))!;
+    expect(computeVectorStats(s.columns.get('v')!, flags)).toEqual({
+      min: -5,
+      max: 4,
+      minPositive: 2,
+    });
   });
 
   it('collectFiniteValues skips NaN and honors flags', () => {
