@@ -217,7 +217,7 @@ const DraggableHeader: React.FC<{
       ) : isOver ? (
         <span className="font-bold text-brand-primary p-2 text-center break-all">Drop here</span>
       ) : (
-        <span className="font-bold text-brand-dark p-2 text-center break-all">
+        <span className="font-bold text-teal-800 bg-teal-50/90 rounded px-2 py-1 text-center break-all">
           {name}
           {isRainbowOrderColumn && (
             <span className="block text-[10px] font-semibold text-purple-600 uppercase tracking-wide">
