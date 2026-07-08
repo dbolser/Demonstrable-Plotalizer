@@ -372,7 +372,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   // truth everywhere else (stacked histograms, regression fits, table…).
   // Keyed by column NAMES (not Column identity) so visibility/scale edits —
   // which produce new Column objects with the same names — never rebuild it.
-  const columnNamesKey = useMemo(() => columns.map(c => c.name).join(''), [columns]);
+  const columnNamesKey = useMemo(() => columns.map(c => c.name).join('\u0001'), [columns]);
   const columnStore = useMemo(
     () => buildColumnStore(data, columns.map(c => c.name)),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- columnNamesKey stands in for columns
