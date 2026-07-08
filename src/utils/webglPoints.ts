@@ -326,9 +326,15 @@ export class WebGLPointRenderer {
 
     const program = gl.createProgram();
     if (!program) throw new Error('createProgram failed');
-    gl.attachShader(program, compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER));
-    gl.attachShader(program, compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER));
+    const vs = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
+    const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
     gl.linkProgram(program);
+    // Flag shaders for deletion now that the program holds them; otherwise
+    // they outlive deleteProgram() and leak across dispose/recreate cycles.
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
       throw new Error(`program link failed: ${gl.getProgramInfoLog(program)}`);
     }
@@ -477,13 +483,16 @@ export class WebGLPointRenderer {
       if (!buffer) return;
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.bufferData(gl.ARRAY_BUFFER, source.build(), gl.STATIC_DRAW);
-      cached = { buffer, lastUse: 0 };
+      // Stamp before evicting: with lastUse 0 a full cache would evict the
+      // buffer just uploaded (it has the minimum tick), deleting it out from
+      // under the draw call below and forcing a rebuild on every frame.
+      cached = { buffer, lastUse: ++this.useTick };
       this.positionBuffers.set(source.key, cached);
       this.evictStaleBuffers();
     } else {
       gl.bindBuffer(gl.ARRAY_BUFFER, cached.buffer);
+      cached.lastUse = ++this.useTick;
     }
-    cached.lastUse = ++this.useTick;
     gl.enableVertexAttribArray(location);
     gl.vertexAttribPointer(location, 1, gl.FLOAT, false, 0, 0);
   }
