@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Column, FilterMode, ColorMode } from '../types';
 import type { CorrelationKind } from '../src/utils/correlationUtils';
 import type { ColorState } from '../src/utils/colorUtils';
@@ -6,7 +6,7 @@ import type { FacetColumnSummary, FacetSelections } from '../src/utils/facetUtil
 import { FileUpload } from './FileUpload';
 import { UrlInput } from './UrlInput';
 import { PanelSection } from './PanelSection';
-import { DownloadIcon } from './icons';
+import { DownloadIcon, LinkIcon } from './icons';
 import { renderMatrixToPngBlob, downloadBlob } from '../src/utils/exportPng';
 import type { FileHistoryEntry } from '../src/utils/fileHistory';
 import { formatRelativeTime } from '../src/utils/fileHistory';
@@ -73,6 +73,9 @@ interface ControlPanelProps {
   onToggleFacetValue: (column: string, value: string) => void;
   onSetColumnFacet: (column: string, values: Set<string> | null) => void;
   onClearAllFacets: () => void;
+  // Issue #43: shareable view links.
+  onBuildShareLink: () => string;
+  shareLinkIncludesData: boolean;
 }
 
 export const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -132,6 +135,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onToggleFacetValue,
   onSetColumnFacet,
   onClearAllFacets,
+  onBuildShareLink,
+  shareLinkIncludesData,
 }) => {
   // Facet columns are collapsed by default; a column with an active facet
   // still shows its "filtered" badge while collapsed.
@@ -144,6 +149,53 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       else next.add(column);
       return next;
     });
+  };
+
+  // Issue #43: "Copy Share Link" feedback. 'copied' flashes briefly;
+  // 'failed' shows the link in a select-all input for manual copying.
+  const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [failedShareLink, setFailedShareLink] = useState<string>('');
+  const shareResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
+  }, []);
+
+  const handleCopyShareLink = async () => {
+    const link = onBuildShareLink();
+    let copied = false;
+    // Primary path; may be unavailable (insecure context) or blocked.
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(link);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+    if (!copied) {
+      // Fallback: hidden textarea + execCommand('copy').
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = link;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch {
+        copied = false;
+      }
+    }
+    if (shareResetTimerRef.current) clearTimeout(shareResetTimerRef.current);
+    if (copied) {
+      setShareStatus('copied');
+      setFailedShareLink('');
+      shareResetTimerRef.current = setTimeout(() => setShareStatus('idle'), 2000);
+    } else {
+      setShareStatus('failed');
+      setFailedShareLink(link);
+    }
   };
 
   const handleDownloadPNG = async () => {
@@ -757,13 +809,44 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
       </PanelSection>
 
       <PanelSection title="Export">
-        <button
-          onClick={handleDownloadPNG}
-          className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
-        >
-          <DownloadIcon className="h-5 w-5" />
-          <span>Download PNG</span>
-        </button>
+        <div className="space-y-2">
+          <button
+            onClick={handleDownloadPNG}
+            className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
+          >
+            <DownloadIcon className="h-5 w-5" />
+            <span>Download PNG</span>
+          </button>
+          <button
+            onClick={handleCopyShareLink}
+            className="w-full px-4 py-2 bg-brand-secondary text-white font-semibold rounded-lg shadow-md hover:bg-brand-primary transition-colors flex items-center justify-center space-x-2"
+            title={shareLinkIncludesData
+              ? 'Copy a link that reloads this data and view'
+              : 'Copy a link that restores this view (data not included)'}
+          >
+            <LinkIcon className="h-5 w-5" />
+            <span>{shareStatus === 'copied' ? 'Copied!' : 'Copy Share Link'}</span>
+          </button>
+          {shareStatus === 'failed' && (
+            <div className="text-xs text-red-700">
+              <p className="mb-1">Couldn't access the clipboard — copy the link manually:</p>
+              <input
+                type="text"
+                readOnly
+                value={failedShareLink}
+                onFocus={(e) => e.target.select()}
+                className="w-full p-1 border border-red-300 rounded text-xs font-mono"
+                aria-label="Share link"
+              />
+            </div>
+          )}
+          {!shareLinkIncludesData && (
+            <p className="text-xs text-gray-500">
+              This data was loaded from a local file, so the link restores your
+              view only — the recipient must load the same file.
+            </p>
+          )}
+        </div>
       </PanelSection>
     </div>
   );
