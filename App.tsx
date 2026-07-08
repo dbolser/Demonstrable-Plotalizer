@@ -29,6 +29,15 @@ import {
 } from './src/utils/facetUtils';
 import type { FacetSelections } from './src/utils/facetUtils';
 import { stepCellSize } from './src/utils/zoomUtils';
+import {
+  parseViewState,
+  getViewParamFromHash,
+  buildShareLink,
+  applyViewToColumns,
+  facetSelectionsToRecord,
+  sanitizeFacetSelections,
+} from './src/utils/viewState';
+import type { ViewState } from './src/utils/viewState';
 import type { PCAVarianceEntry } from './components/ControlPanel';
 import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
 
@@ -43,6 +52,12 @@ const App: React.FC = () => {
   const [brushSelection, setBrushSelection] = useState<BrushSelection | null>(null);
   const [filterMode, setFilterMode] = useState<FilterMode>('highlight');
   const [showHistograms, setShowHistograms] = useState<boolean>(true);
+  // Issue #56: the data table is available via a persistent toggle. When a
+  // brush selection exists the table shows the selected rows (and still
+  // auto-appears even with the toggle off, so the feature stays
+  // discoverable); with the toggle on and no selection it shows the full
+  // dataset capped at the first TABLE_ROW_CAP rows.
+  const [showDataTable, setShowDataTable] = useState<boolean>(false);
   const [useUniformLogBins, setUseUniformLogBins] = useState<boolean>(false);
   const [globalLogScale, setGlobalLogScale] = useState<boolean>(false);
   // Issue #50: per-cell reference line toggles (both default off)
@@ -73,6 +88,13 @@ const App: React.FC = () => {
   // Issue #41: per category column, the set of selected facet values.
   // Absent column = no facet (all rows pass).
   const [facetSelections, setFacetSelections] = useState<FacetSelections>(new Map());
+  // Issue #43: URL the current dataset was fetched from, when it came from a
+  // URL (via ?data=, the URL input, or a shared view link). null for local
+  // uploads / history / sample data. Share links embed it as ?data=.
+  const [dataSourceUrl, setDataSourceUrl] = useState<string | null>(null);
+  // Issue #43: a view parsed from #view= at mount, waiting for real columns
+  // to exist. Applied (one-shot) at the end of applyParseResult.
+  const pendingViewRef = useRef<ViewState | null>(null);
 
   // Monotonic id for data loads. A single counter guards every async stage:
   // remote fetches (URL/sample) capture the id before awaiting and drop stale
@@ -115,14 +137,22 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Apply a completed parse result to app state.
-  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>) => {
+  // Apply a completed parse result to app state. `sourceUrl` is the URL the
+  // CSV text was fetched from (null for local uploads / history / sample).
+  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>, sourceUrl: string | null = null) => {
     if (result.errors.length > 0) {
       console.error("CSV Parsing errors:", result.errors);
       alert("Error parsing CSV file. Check console for details.");
       setIsRecalculating(false);
       return;
     }
+
+    // Issue #43: remember where this dataset came from so "Copy Share Link"
+    // can embed ?data=. Recorded only now — after the parse succeeded and the
+    // displayed dataset is definitely being replaced — so a failed load
+    // (early return above) leaves the old matrix's share links pointing at
+    // the data actually on screen.
+    setDataSourceUrl(sourceUrl);
 
     const rawData = result.data;
     if (rawData.length === 0) {
@@ -193,6 +223,70 @@ const App: React.FC = () => {
     setShowColumnGroups(false);
     setColumnGroups(new Map());
 
+    // Issue #43: a pending shared view (parsed from #view= at mount, or
+    // waiting for a manual load of a locally-shared file) overrides the
+    // defaults just set. This deliberately runs AFTER the standard resets
+    // above so it composes with the normal load pipeline instead of racing
+    // it. One-shot: the ref is cleared here so any later manual load starts
+    // fresh. Everything is applied by column NAME, so a view saved against a
+    // slightly different file degrades gracefully (see viewState.ts).
+    const view = pendingViewRef.current;
+    if (view) {
+      pendingViewRef.current = null;
+      if (view.columns) {
+        // The sharer's explicit column visibility supersedes the automatic
+        // column limit: rebuild from the full detected set, then apply the
+        // view. Detected columns the view doesn't name stay visible at the
+        // end in natural order.
+        const fullColumns = detected.numericColumns.map(key => ({
+          name: key,
+          scale: 'linear' as ScaleType,
+          visible: true,
+        }));
+        setColumns(applyViewToColumns(fullColumns, view.columns));
+        setColumnLimitNotice(null);
+      }
+      if (view.columnFilter !== undefined) setColumnFilter(view.columnFilter);
+      if (view.filterMode !== undefined) setFilterMode(view.filterMode);
+      if (view.showHistograms !== undefined) setShowHistograms(view.showHistograms);
+      if (view.useUniformLogBins !== undefined) setUseUniformLogBins(view.useUniformLogBins);
+      if (view.globalLogScale !== undefined) setGlobalLogScale(view.globalLogScale);
+      if (view.showIdentityLine !== undefined) setShowIdentityLine(view.showIdentityLine);
+      if (view.showRegressionLine !== undefined) setShowRegressionLine(view.showRegressionLine);
+      if (view.showCorrelation !== undefined) setShowCorrelation(view.showCorrelation);
+      if (view.tintCellBorders !== undefined) setTintCellBorders(view.tintCellBorders);
+      if (view.correlationMetric !== undefined) setCorrelationMetric(view.correlationMetric);
+      if (view.cellSize !== undefined) setCellSize(view.cellSize);
+      if (view.showDataTable !== undefined) setShowDataTable(view.showDataTable);
+      if (view.colorMode !== undefined) {
+        // Same fallback model as the standard reset above: a vanished
+        // category column drops to null (the UI prompts for a new one);
+        // the mode itself only falls back to 'none' when category coloring
+        // cannot apply at all.
+        const categoryColumn =
+          view.categoryColorColumn && allStringCols.includes(view.categoryColorColumn)
+            ? view.categoryColorColumn
+            : null;
+        setCategoryColorColumn(categoryColumn);
+        setColorMode(
+          view.colorMode === 'category' && allStringCols.length === 0 ? 'none' : view.colorMode
+        );
+      }
+      if (view.rainbowOrderColumn !== undefined) {
+        setRainbowOrderColumn(
+          detected.numericColumns.includes(view.rainbowOrderColumn)
+            ? view.rainbowOrderColumn
+            : null
+        );
+      }
+      if (view.facetSelections) {
+        // Vanished columns/values are dropped inside the sanitizer.
+        setFacetSelections(
+          sanitizeFacetSelections(view.facetSelections, dataWithIds, allStringCols)
+        );
+      }
+    }
+
     // Clear isRecalculating if there are no numeric columns, since
     // ScatterPlotMatrix won't mount and onRenderComplete won't be called
     if (numericColumns.length === 0) {
@@ -200,7 +294,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleDataLoaded = useCallback((csvText: string) => {
+  const handleDataLoaded = useCallback((csvText: string, sourceUrl: string | null = null) => {
     // A new load supersedes any in-flight remote fetch or worker parse.
     const loadId = ++loadRequestIdRef.current;
     setIsUrlLoading(false);
@@ -225,7 +319,10 @@ const App: React.FC = () => {
           // older, slower parse can't overwrite a newer dataset (or clear
           // the newer load's indicator).
           if (loadId !== loadRequestIdRef.current) return;
-          applyParseResult(result);
+          // sourceUrl travels with the parse it belongs to (and behind the
+          // same request-id guard), so a slower, superseded load can never
+          // clobber a newer one's source.
+          applyParseResult(result, sourceUrl);
         },
       });
     });
@@ -250,8 +347,8 @@ const App: React.FC = () => {
   }, [handleDataLoaded]);
 
   // File upload handler that also saves to history
-  const handleFileUpload = useCallback(async (csvText: string, filename: string) => {
-    handleDataLoaded(csvText);
+  const handleFileUpload = useCallback(async (csvText: string, filename: string, sourceUrl: string | null = null) => {
+    handleDataLoaded(csvText, sourceUrl);
     try {
       await saveFile(filename, csvText);
       const history = await getHistory();
@@ -272,7 +369,7 @@ const App: React.FC = () => {
       const csvText = await fetchCsvFromUrl(url);
       // Ignore this response if a newer load started in the meantime
       if (loadRequestIdRef.current !== requestId) return;
-      await handleFileUpload(csvText, url);
+      await handleFileUpload(csvText, url, url);
     } catch (err) {
       // A newer load owns the loading/error state now; don't clobber it
       if (loadRequestIdRef.current !== requestId) return;
@@ -282,17 +379,31 @@ const App: React.FC = () => {
     }
   }, [handleFileUpload]);
 
-  // On mount: honour a ?data=<url> query param, otherwise load the sample
-  // data. The ref guard keeps React StrictMode's double-invoked effects (and
-  // any dependency-identity churn) from kicking off a duplicate fetch.
+  // On mount: parse a shared view from the #view= fragment FIRST (issue
+  // #43), then decide what data to load. A ?data=<url> query param wins over
+  // the view's embedded data URL when both are present; a view carrying a
+  // data URL loads it even without ?data=. A view WITHOUT a data URL (the
+  // dataset was a local upload when the link was made) shows the upload
+  // screen instead of auto-loading the sample: the pending view is then
+  // applied to whatever file the user loads. The fragment is deliberately
+  // left in the address bar — it is only read here, once, and keeping it
+  // means the address bar remains a working share link across refreshes.
+  // The ref guard keeps React StrictMode's double-invoked effects (and any
+  // dependency-identity churn) from kicking off a duplicate fetch.
   const didInitialLoadRef = useRef(false);
   useEffect(() => {
     if (didInitialLoadRef.current) return;
     didInitialLoadRef.current = true;
-    const dataUrl = getDataUrlFromQuery(window.location.search);
+    const encodedView = getViewParamFromHash(window.location.hash);
+    const view = encodedView ? parseViewState(encodedView) : null;
+    if (view) {
+      pendingViewRef.current = view;
+    }
+    const queryDataUrl = getDataUrlFromQuery(window.location.search);
+    const dataUrl = queryDataUrl ?? view?.dataUrl ?? null;
     if (dataUrl) {
       handleLoadFromUrl(dataUrl);
-    } else {
+    } else if (!view) {
       loadSampleData();
     }
   }, [handleLoadFromUrl, loadSampleData]);
@@ -508,12 +619,38 @@ const App: React.FC = () => {
     setRainbowOrderColumn(prev => (prev === columnName ? null : columnName));
   }, []);
 
-  // Issue #56: the data table is available via a persistent toggle. When a
-  // brush selection exists the table shows the selected rows (and still
-  // auto-appears even with the toggle off, so the feature stays
-  // discoverable); with the toggle on and no selection it shows the full
-  // dataset capped at the first TABLE_ROW_CAP rows.
-  const [showDataTable, setShowDataTable] = useState<boolean>(false);
+  // Issue #43: snapshot the current view into a share link. Built on demand
+  // (button click) — the fragment is NOT live-synced on every state change.
+  // Brush selection (transient) and PCA columns (derived; saved entries for
+  // PC1..PC3 simply won't match on restore) are intentionally excluded.
+  const handleBuildShareLink = useCallback((): string => {
+    const state: ViewState = {
+      dataUrl: dataSourceUrl ?? undefined,
+      columns: columns.map(col => ({ name: col.name, visible: col.visible, scale: col.scale })),
+      columnFilter: columnFilter || undefined,
+      filterMode,
+      showHistograms,
+      useUniformLogBins,
+      globalLogScale,
+      colorMode,
+      categoryColorColumn: categoryColorColumn ?? undefined,
+      rainbowOrderColumn: rainbowOrderColumn ?? undefined,
+      facetSelections: facetSelectionsToRecord(facetSelections),
+      showIdentityLine,
+      showRegressionLine,
+      showCorrelation,
+      tintCellBorders,
+      correlationMetric,
+      cellSize,
+      showDataTable,
+    };
+    return buildShareLink(window.location.origin + window.location.pathname, state);
+  }, [
+    dataSourceUrl, columns, columnFilter, filterMode, showHistograms,
+    useUniformLogBins, globalLogScale, colorMode, categoryColorColumn,
+    rainbowOrderColumn, facetSelections, showIdentityLine, showRegressionLine,
+    showCorrelation, tintCellBorders, correlationMetric, cellSize, showDataTable,
+  ]);
 
   const hasActiveSelection = !!brushSelection?.selectedIds && brushSelection.selectedIds.size > 0;
 
@@ -743,6 +880,8 @@ const App: React.FC = () => {
               onToggleFacetValue={handleToggleFacetValue}
               onSetColumnFacet={handleSetColumnFacet}
               onClearAllFacets={handleClearAllFacets}
+              onBuildShareLink={handleBuildShareLink}
+              shareLinkIncludesData={dataSourceUrl !== null}
             />
           </aside>
           <main className="flex-1 flex flex-col bg-gray-100 overflow-hidden">
