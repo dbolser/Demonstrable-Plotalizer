@@ -6,10 +6,9 @@ Treat these as **targets, not gates** — the app already falls back safely (`MA
 
 | Stage | Rows × visible cols | What unlocks it |
 |---|---|---|
-| Today (sync Canvas 2D) | ~30k × 10 (~2–4s first render, cached after) | — |
-| Non-blocking render | 100–200k × 10, UI stays responsive | #30 (worker parse + RAF chunking) |
-| Decoupled from n | 1M+ rows interactive | #32 (density/chips), columnar typed-array storage |
-| GPU | 1–10M point instances | #33 (WebGL); memory becomes the limit |
+| Canvas 2D baseline (shipped #30/#31) | 100–200k × 10 non-blocking | worker parse + RAF chunking + ImageData LRU |
+| Columnar + WebGL (shipped #73/#74) | 12M points: 15.5s → 4.2s full paint on *software* GL (SwiftShader); real GPUs land far lower | one shared GL context, blit-into-2D, Canvas 2D fallback |
+| Next ceiling | CPU-side costs now dominate (brush grid, RAF pacing at 4 cells/frame, blits) | tune scheduler; #32 (density/chips) PARKED pending brushing-semantics design |
 
 Visible columns cap at ~15–20 regardless of engine (k² cells is a pixel-budget problem, not a rendering one) — mitigated by grouping (#45) and correlation-based sorting (#36), not by faster drawing.
 
@@ -19,9 +18,9 @@ Feature backlog, reconstructed July 2026 (branch/PR triage: #23 merged, #19/#22 
 
 - [x] **Web Worker CSV parsing + RAF-chunked rendering** ([#30](https://github.com/dbolser/Demonstrable-Plotalizer/issues/30)) *(salvaged from PR #19)* — PapaParse `worker: true` so parsing never freezes the UI; render ~4 cells / ~12ms per animation frame with cancellation, streaming progress (cells done, elapsed) into the existing loading indicator instead of painting all cells synchronously. Avoid the old branch's regressions (keep `CoordinateDisplay`/`HistogramBin` types and PR #20's histogram-brush coordinate readout).
 - [x] **Per-cell ImageData LRU cache** ([#31](https://github.com/dbolser/Demonstrable-Plotalizer/issues/31)) *(salvaged from PR #22)* — main's render-key cache (`ScatterPlotMatrix.tsx` ~L500) only skips re-render when the key is unchanged; add a small per-canvas LRU (~6 entries, unselected-state only, size-capped) so toggling log scale or a filter *back* restores instantly via `putImageData`. ~40 lines around the existing renderKey check.
-- [ ] **Density-based sub-sampling + pre-rendered chips** ([#32](https://github.com/dbolser/Demonstrable-Plotalizer/issues/32)) — stop drawing every point. Bin each cell (extend the spatial grid to finer resolution); in dense regions draw a representative subset or density shade. Pre-render each cell's unselected cloud to an offscreen canvas ("chip") and blit it, overlaying only selected points live. Decouples render cost from row count; makes tile dragging free. Target: 1M+ rows interactive.
-- [ ] **WebGL backend** ([#33](https://github.com/dbolser/Demonstrable-Plotalizer/issues/33)) — Canvas 2D tops out around a few million point-draws per full-matrix pass. A point-sprite renderer (regl or hand-rolled; one shared context, scissored per cell) handles 1–10M instances at interactive rates and makes per-point categorical color cheap via attribute buffers.
-- [ ] **Columnar typed-array storage** (no issue yet) — row-objects cost ~10× the raw data in memory; `Float64Array` per column is the prerequisite for 1M-row datasets and fast worker transfer (transferables).
+- [ ] **[PARKED]** **Density-based sub-sampling + pre-rendered chips** ([#32](https://github.com/dbolser/Demonstrable-Plotalizer/issues/32)) — stop drawing every point. Bin each cell (extend the spatial grid to finer resolution); in dense regions draw a representative subset or density shade. Pre-render each cell's unselected cloud to an offscreen canvas ("chip") and blit it, overlaying only selected points live. Decouples render cost from row count; makes tile dragging free. Target: 1M+ rows interactive.
+- [x] **WebGL backend** ([#33](https://github.com/dbolser/Demonstrable-Plotalizer/issues/33)) — Canvas 2D tops out around a few million point-draws per full-matrix pass. A point-sprite renderer (regl or hand-rolled; one shared context, scissored per cell) handles 1–10M instances at interactive rates and makes per-point categorical color cheap via attribute buffers.
+- [x] **Columnar typed-array storage** (shipped with #33 stack, PR #73) — row-objects cost ~10× the raw data in memory; `Float64Array` per column is the prerequisite for 1M-row datasets and fast worker transfer (transferables).
 
 ## Interaction
 
