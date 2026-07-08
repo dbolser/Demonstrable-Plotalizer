@@ -16,6 +16,12 @@ import {
   collectFiniteValues,
   selectIdsInValueRange,
 } from '../src/utils/columnStore';
+import {
+  WebGLPointRenderer,
+  buildNormalizedPositions,
+  buildSlotAttribute,
+  paletteToRgba,
+} from '../src/utils/webglPoints';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
 import { cellValueToNumber } from '../src/utils/cellValueUtils';
 import { MISSING_COLOR, MISSING_SLOT } from '../src/utils/colorUtils';
@@ -364,6 +370,32 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     return brushSelection?.selectedIds || new Set<number>();
   }, [brushSelection]);
 
+  // Single data-identity version: bump whenever the data array reference
+  // changes (ref-guarded, so it is idempotent under strict-mode double
+  // renders). Two things depend on it: (1) distinct datasets can share
+  // length and __id range (__id is just the row index), so length/first/last
+  // alone cannot tell "file B, same shape" from "same file"; (2) value-only
+  // updates (e.g. recomputed PCA scores on the same rows/ids) reuse the same
+  // ids. Folding the version into dataStateHash means render keys — and the
+  // ImageData snapshots keyed by them — can never resurrect pixels from a
+  // previous dataset. Brush/selection changes reuse the same array, so
+  // canvas caching stays effective for interaction.
+  const dataVersionRef = useRef(0);
+  const lastDataRef = useRef<DataPoint[]>(data);
+  if (lastDataRef.current !== data) {
+    dataVersionRef.current += 1;
+    lastDataRef.current = data;
+  }
+
+  const dataStateHash = useMemo(() => {
+    if (data.length === 0) return `v${dataVersionRef.current}-empty`;
+    const firstId = data[0]?.__id ?? 0;
+    const lastId = data[data.length - 1]?.__id ?? 0;
+    return `v${dataVersionRef.current}-${data.length}-${firstId}-${lastId}`;
+  }, [data]);
+
+  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
+
   // Columnar typed-array store over the rendered dataset: one Float64Array
   // per column (NaN = missing) plus per-column min/max/minPositive from the
   // same single build pass. The hot paths below (point paint loops, scale
@@ -387,21 +419,103 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     [columnStore, selectedIds]
   );
 
+  // WebGL point backend (issue #33): one shared cell-sized context; each
+  // cell's points are drawn there and blitted into the cell's 2D canvas, so
+  // the snapshot LRU, reference-line overlay and PNG export pipelines run
+  // unchanged. `undefined` = not yet probed, `null` = unavailable/lost →
+  // the Canvas 2D loops below run exactly as before (jsdom, old browsers).
+  const glRendererRef = useRef<WebGLPointRenderer | null | undefined>(undefined);
+  useEffect(() => () => {
+    if (glRendererRef.current) glRendererRef.current.dispose();
+    glRendererRef.current = undefined;
+  }, []);
+
+  // Palette texture pixels for the active color state (slot colors + a
+  // trailing missing-color texel).
+  const glPalette = useMemo(
+    () => (colorState ? paletteToRgba(colorState.slotColors, MISSING_COLOR) : null),
+    [colorState]
+  );
+
   // Canvas rendering function: paints one cell's points from the columnar
   // store. Iterates store rows (== the matrix's dataset, faceting included);
   // filter-mode subsetting and highlight-mode dimming are driven by
   // selectedFlags, matching the previous row-object behavior exactly.
+  // When WebGL is available the points are drawn there instead and blitted
+  // in; the 2D loops below double as the fallback path.
   const renderPointsToCanvas = useCallback((
     canvas: HTMLCanvasElement,
     xValues: Float64Array,
     yValues: Float64Array,
     xScale: d3.ScaleLinear<number, number>,
-    yScale: d3.ScaleLinear<number, number>
+    yScale: d3.ScaleLinear<number, number>,
+    xColName: string,
+    yColName: string,
+    xLog: boolean,
+    yLog: boolean
   ) => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     ctx.clearRect(0, 0, size, size);
+
+    // --- WebGL fast path -------------------------------------------------
+    if (glRendererRef.current === undefined) {
+      glRendererRef.current = WebGLPointRenderer.create(size);
+      console.info(
+        `[ScatterPlotMatrix] point rendering backend: ${glRendererRef.current ? 'WebGL' : 'Canvas 2D'}`
+      );
+    }
+    const glRenderer = glRendererRef.current;
+    if (glRenderer) {
+      try {
+        const xd = xScale.domain();
+        const yd = yScale.domain();
+        const xr = xScale.range();
+        const yr = yScale.range();
+        // Position buffers are normalized-t per (column, scale, domain), so
+        // the same buffer serves a column on either axis of any cell.
+        const xKey = `${dataStateHash}|${xColName}|${xLog ? 'log' : 'lin'}|${xd[0]}|${xd[1]}`;
+        const yKey = `${dataStateHash}|${yColName}|${yLog ? 'log' : 'lin'}|${yd[0]}|${yd[1]}`;
+        const ok = glRenderer.renderCell({
+          count: columnStore.length,
+          size,
+          xRange: [xr[0], xr[1]],
+          yRange: [yr[0], yr[1]],
+          x: { key: xKey, build: () => buildNormalizedPositions(xValues, xd[0], xd[1], xLog) },
+          y: { key: yKey, build: () => buildNormalizedPositions(yValues, yd[0], yd[1], yLog) },
+          flags: selectedFlags
+            ? { key: `${dataStateHash}|${selectedStateHash}`, data: selectedFlags }
+            : null,
+          color: colorState && glPalette
+            ? {
+              slots: {
+                key: `${dataStateHash}|slots|${colorState.hash}`,
+                build: () => buildSlotAttribute(
+                  colorState.slotById,
+                  columnStore.rowIds,
+                  colorState.slotColors.length
+                ),
+              },
+              paletteKey: colorState.hash,
+              palette: glPalette,
+              paletteSize: colorState.slotColors.length + 1,
+            }
+            : null,
+          filterMode,
+        });
+        if (ok) {
+          ctx.drawImage(glRenderer.canvas, 0, 0);
+          return;
+        }
+      } catch {
+        // Fall through to the 2D path below.
+      }
+      // Unusable context (lost / failed draw): permanent Canvas 2D fallback.
+      glRendererRef.current = null;
+      console.info('[ScatterPlotMatrix] WebGL context unusable — falling back to Canvas 2D');
+    }
+    // --- Canvas 2D path (also the WebGL fallback) ------------------------
 
     const rowCount = columnStore.length;
     const { rowIds } = columnStore;
@@ -495,7 +609,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     }
 
     ctx.globalAlpha = 1;
-  }, [size, colorState, columnStore, selectedFlags, filterMode]);
+  }, [size, colorState, columnStore, selectedFlags, filterMode, dataStateHash, selectedStateHash, glPalette]);
 
   // filteredData still feeds the row-object consumers (stacked histograms,
   // regression/correlation fits); the point/histogram hot paths read the
@@ -504,32 +618,6 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     () => filterData(data, selectedIds, filterMode),
     [data, selectedIds, filterMode]
   );
-
-  // Single data-identity version: bump whenever the data array reference
-  // changes (ref-guarded, so it is idempotent under strict-mode double
-  // renders). Two things depend on it: (1) distinct datasets can share
-  // length and __id range (__id is just the row index), so length/first/last
-  // alone cannot tell "file B, same shape" from "same file"; (2) value-only
-  // updates (e.g. recomputed PCA scores on the same rows/ids) reuse the same
-  // ids. Folding the version into dataStateHash means render keys — and the
-  // ImageData snapshots keyed by them — can never resurrect pixels from a
-  // previous dataset. Brush/selection changes reuse the same array, so
-  // canvas caching stays effective for interaction.
-  const dataVersionRef = useRef(0);
-  const lastDataRef = useRef<DataPoint[]>(data);
-  if (lastDataRef.current !== data) {
-    dataVersionRef.current += 1;
-    lastDataRef.current = data;
-  }
-
-  const dataStateHash = useMemo(() => {
-    if (data.length === 0) return `v${dataVersionRef.current}-empty`;
-    const firstId = data[0]?.__id ?? 0;
-    const lastId = data[data.length - 1]?.__id ?? 0;
-    return `v${dataVersionRef.current}-${data.length}-${firstId}-${lastId}`;
-  }, [data]);
-
-  const selectedStateHash = useMemo(() => computeSelectedStateHash(selectedIds), [selectedIds]);
 
   // Memoized per-cell pairwise stats (issues #50/#36): brush-driven repaints
   // in highlight mode reuse the same fit/correlation instead of re-scanning
@@ -1570,7 +1658,11 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           task.xValues,
           task.yValues,
           task.xScale,
-          task.yScale
+          task.yScale,
+          task.xColName,
+          task.yColName,
+          task.xLog,
+          task.yLog
         );
         // Reference-line overlay: a separate draw step after the point pass,
         // still inside the same task so snapshots capture the full cell.
