@@ -825,10 +825,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               : 'Copy a link that restores this view (data not included)'}
           >
             <LinkIcon className="h-5 w-5" />
-            <span>{shareStatus === 'copied' ? 'Copied!' : 'Copy Share Link'}</span>
+            {/* Live region so screen readers announce the "Copied!" flash. */}
+            <span aria-live="polite">
+              {shareStatus === 'copied' ? 'Copied!' : 'Copy Share Link'}
+            </span>
           </button>
           {shareStatus === 'failed' && (
-            <div className="text-xs text-red-700">
+            <div className="text-xs text-red-700" role="alert">
               <p className="mb-1">Couldn't access the clipboard — copy the link manually:</p>
               <input
                 type="text"

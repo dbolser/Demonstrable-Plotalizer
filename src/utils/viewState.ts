@@ -2,6 +2,7 @@ import type { Column, ScaleType, FilterMode, ColorMode } from '../../types';
 import type { CorrelationKind } from './correlationUtils';
 import type { FacetSelections } from './facetUtils';
 import { getFacetValue } from './facetUtils';
+import { clampCellSize } from './zoomUtils';
 import type { DataPoint } from '../../types';
 
 /**
@@ -36,7 +37,7 @@ import type { DataPoint } from '../../types';
  *   sc  0 | 1                   show correlation values
  *   tb  0 | 1                   tint cell borders by correlation
  *   me  'p' | 's'               correlation metric pearson | spearman
- *   cs  number                  cell size (px)
+ *   cs  number                  cell size (px; clamped to zoom bounds on parse)
  *   tv  0 | 1                   data table toggle
  *
  * Parsing is tolerant by design: `parseViewState` never throws; garbage or
@@ -234,7 +235,12 @@ export function parseViewState(encoded: string): ViewState | null {
   if (tb !== undefined) state.tintCellBorders = tb;
   if (w.me === 'p') state.correlationMetric = 'pearson';
   else if (w.me === 's') state.correlationMetric = 'spearman';
-  if (typeof w.cs === 'number' && Number.isFinite(w.cs) && w.cs > 0) state.cellSize = w.cs;
+  // Clamp to the app's committed zoom bounds: a crafted/corrupt payload with
+  // a huge cs would otherwise size every canvas in the matrix off it and can
+  // hang the tab.
+  if (typeof w.cs === 'number' && Number.isFinite(w.cs) && w.cs > 0) {
+    state.cellSize = clampCellSize(w.cs);
+  }
   const tv = asBool(w.tv);
   if (tv !== undefined) state.showDataTable = tv;
   return state;
@@ -282,13 +288,16 @@ export function applyViewToColumns(
   viewColumns: ViewStateColumn[] | undefined
 ): Column[] {
   if (!viewColumns || viewColumns.length === 0) return detected;
-  const detectedNames = new Set(detected.map(col => col.name));
+  // Spread the DETECTED column and override only what the view carries, so
+  // any future Column fields survive having a saved view applied.
+  const detectedByName = new Map(detected.map(col => [col.name, col]));
   const applied = new Set<string>();
   const result: Column[] = [];
   for (const vc of viewColumns) {
-    if (!detectedNames.has(vc.name) || applied.has(vc.name)) continue;
+    const original = detectedByName.get(vc.name);
+    if (!original || applied.has(vc.name)) continue;
     applied.add(vc.name);
-    result.push({ name: vc.name, visible: vc.visible, scale: vc.scale });
+    result.push({ ...original, visible: vc.visible, scale: vc.scale });
   }
   if (result.length === 0) return detected; // nothing matched: keep defaults
   for (const col of detected) {
@@ -322,7 +331,10 @@ export function sanitizeFacetSelections(
   if (!record) return facets;
   const stringColumnSet = new Set(stringColumns);
   for (const [column, values] of Object.entries(record)) {
-    if (!stringColumnSet.has(column)) continue;
+    // The isArray check is belt-and-braces for callers that pass wire-form
+    // data that didn't come through parseViewState (which already filters
+    // non-array values).
+    if (!stringColumnSet.has(column) || !Array.isArray(values)) continue;
     const existing = new Set<string>();
     for (const row of data) existing.add(getFacetValue(row, column));
     const kept = new Set(values.filter(value => existing.has(value)));

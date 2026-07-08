@@ -13,6 +13,7 @@ import type { ViewState } from '../utils/viewState';
 import type { Column, DataPoint } from '../../types';
 import type { FacetSelections } from '../utils/facetUtils';
 import { MISSING_FACET_VALUE } from '../utils/facetUtils';
+import { MIN_CELL_SIZE, MAX_CELL_SIZE } from '../utils/zoomUtils';
 
 // Node/jsdom-compatible base64url encoder for crafting hostile payloads.
 function encodePayload(json: string): string {
@@ -138,9 +139,16 @@ describe('parseViewState tolerance', () => {
   });
 
   it('rejects non-positive or non-finite cell sizes', () => {
-    expect(parseViewState(encodePayload(`{"v":1,"cs":-5}`))).toEqual({});
-    expect(parseViewState(encodePayload(`{"v":1,"cs":0}`))).toEqual({});
-    expect(parseViewState(encodePayload(`{"v":1,"cs":150}`))).toEqual({ cellSize: 150 });
+    expect(parseViewState(encodePayload(`{"v":${VIEW_STATE_VERSION},"cs":-5}`))).toEqual({});
+    expect(parseViewState(encodePayload(`{"v":${VIEW_STATE_VERSION},"cs":0}`))).toEqual({});
+    expect(parseViewState(encodePayload(`{"v":${VIEW_STATE_VERSION},"cs":150}`))).toEqual({ cellSize: 150 });
+  });
+
+  it('clamps out-of-range cell sizes to the zoom bounds (crafted payloads cannot force huge canvases)', () => {
+    expect(parseViewState(encodePayload(`{"v":${VIEW_STATE_VERSION},"cs":1e9}`))).toEqual({ cellSize: MAX_CELL_SIZE });
+    expect(parseViewState(encodePayload(`{"v":${VIEW_STATE_VERSION},"cs":1}`))).toEqual({ cellSize: MIN_CELL_SIZE });
+    // In-range values pass through (rounded).
+    expect(parseViewState(encodePayload(`{"v":${VIEW_STATE_VERSION},"cs":150.4}`))).toEqual({ cellSize: 150 });
   });
 
   it('skips malformed column entries but keeps well-formed ones', () => {
@@ -238,6 +246,16 @@ describe('applyViewToColumns', () => {
     ).toBe(detected);
   });
 
+  it('preserves detected-column fields beyond name/visible/scale', () => {
+    // Future-proofing: if Column ever grows extra fields, applying a saved
+    // view must not strip them from matched columns.
+    const detectedWithExtra = detected.map(col => ({ ...col, extra: `x-${col.name}` }));
+    const result = applyViewToColumns(detectedWithExtra as Column[], [
+      { name: 'b', visible: false, scale: 'log' },
+    ]) as Array<Column & { extra?: string }>;
+    expect(result.map(c => c.extra)).toEqual(['x-b', 'x-a', 'x-c']);
+  });
+
   it('deduplicates repeated names in a hostile payload', () => {
     const result = applyViewToColumns(detected, [
       { name: 'a', visible: false, scale: 'log' },
@@ -300,5 +318,10 @@ describe('facet selection conversion', () => {
 
   it('handles undefined input', () => {
     expect(sanitizeFacetSelections(undefined, data, ['species']).size).toBe(0);
+  });
+
+  it('ignores non-array values in wire-form input that bypassed parseViewState', () => {
+    const hostile = { species: 'cat' } as unknown as Record<string, string[]>;
+    expect(sanitizeFacetSelections(hostile, data, ['species']).size).toBe(0);
   });
 });

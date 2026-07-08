@@ -137,14 +137,22 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Apply a completed parse result to app state.
-  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>) => {
+  // Apply a completed parse result to app state. `sourceUrl` is the URL the
+  // CSV text was fetched from (null for local uploads / history / sample).
+  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>, sourceUrl: string | null = null) => {
     if (result.errors.length > 0) {
       console.error("CSV Parsing errors:", result.errors);
       alert("Error parsing CSV file. Check console for details.");
       setIsRecalculating(false);
       return;
     }
+
+    // Issue #43: remember where this dataset came from so "Copy Share Link"
+    // can embed ?data=. Recorded only now — after the parse succeeded and the
+    // displayed dataset is definitely being replaced — so a failed load
+    // (early return above) leaves the old matrix's share links pointing at
+    // the data actually on screen.
+    setDataSourceUrl(sourceUrl);
 
     const rawData = result.data;
     if (rawData.length === 0) {
@@ -291,10 +299,6 @@ const App: React.FC = () => {
     const loadId = ++loadRequestIdRef.current;
     setIsUrlLoading(false);
     setUrlLoadError(null);
-    // Issue #43: remember where this dataset came from so "Copy Share Link"
-    // can embed ?data=. Set here (inside the load that owns the request id)
-    // so a slower, superseded load can never clobber a newer one's source.
-    setDataSourceUrl(sourceUrl);
     // Show the indicator first; parsing happens in a Web Worker (PapaParse
     // worker: true) so the main thread stays free to paint the
     // "Recalculating…" pill and keep the UI responsive. PapaParse silently
@@ -315,7 +319,10 @@ const App: React.FC = () => {
           // older, slower parse can't overwrite a newer dataset (or clear
           // the newer load's indicator).
           if (loadId !== loadRequestIdRef.current) return;
-          applyParseResult(result);
+          // sourceUrl travels with the parse it belongs to (and behind the
+          // same request-id guard), so a slower, superseded load can never
+          // clobber a newer one's source.
+          applyParseResult(result, sourceUrl);
         },
       });
     });
