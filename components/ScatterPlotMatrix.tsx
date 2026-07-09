@@ -234,7 +234,7 @@ const DraggableHeader: React.FC<{
       ) : isOver ? (
         <span className="font-bold text-brand-primary p-2 text-center break-all">Drop here</span>
       ) : (
-        <span className="font-bold text-teal-800 bg-teal-50/90 rounded px-2 py-1 text-center break-all">
+        <span data-column-label={name} className="font-bold text-teal-800 bg-teal-50/90 rounded px-2 py-1 text-center break-all">
           {name}
           {isRainbowOrderColumn && (
             <span className="block text-[10px] font-semibold text-purple-600 uppercase tracking-wide">
@@ -1754,6 +1754,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       } : undefined}
     >
       <div
+        id="scatterplot-matrix-headers"
         style={{
           position: 'absolute',
           top: 0,

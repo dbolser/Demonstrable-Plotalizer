@@ -206,12 +206,13 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     // serialization exports an empty plot — composite both into a PNG.
     const svgElement = document.querySelector<SVGSVGElement>('#scatterplot-matrix-svg');
     const canvasContainer = document.querySelector<HTMLElement>('#scatterplot-matrix-canvases');
+    const headerContainer = document.querySelector<HTMLElement>('#scatterplot-matrix-headers');
     if (!svgElement || !canvasContainer) {
       alert('Could not find the plot to export — load some data first.');
       return;
     }
     try {
-      const blob = await renderMatrixToPngBlob(svgElement, canvasContainer, 2);
+      const blob = await renderMatrixToPngBlob(svgElement, canvasContainer, 2, headerContainer);
       downloadBlob(blob, 'scatter-plot-matrix.png');
     } catch (err) {
       alert(`PNG export failed: ${err instanceof Error ? err.message : String(err)}`);
