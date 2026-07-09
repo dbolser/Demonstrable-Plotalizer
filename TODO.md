@@ -1,5 +1,7 @@
 # Codebase TODO List
 
+> **⚠️ Largely historical (as of 2026-07-09).** Most items below were fixed during the July 2026 waves (PRs #47–#75) — e.g. the hash-robustness items were superseded by the versioned `dataStateHash` + unified `buildRenderKey`. Current planning lives in **PLAN.md** (working agreement + queue) and **ROADMAP.md** (feature backlog). A final audit-and-delete of this file is queued in PLAN.md.
+
 This is a prioritized list of tasks for improving the codebase, generated from various code comments and analysis.
 
 ---
