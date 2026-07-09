@@ -2,8 +2,9 @@
 // layers (for performance), the SVG holds axes, ticks, histograms and
 // overlays, and the diagonal column labels are HTML drag-handles positioned
 // over the plot — so no single layer contains the whole picture. We
-// composite: white background → cell canvases → column labels → SVG (the DOM
-// stacking order), at an upscaled resolution, and hand back a PNG blob.
+// composite: white background → cell canvases → SVG → column labels (the
+// labels are positioned elements, so they paint above the static SVG in the
+// live view), at an upscaled resolution, and hand back a PNG blob.
 
 export interface CanvasPlacement {
   canvas: HTMLCanvasElement;
@@ -54,7 +55,10 @@ export interface LabelPlacement {
 // text content may include extra badges we don't want in the export).
 export function collectLabelPlacements(
   headerContainer: HTMLElement,
-  origin: { left: number; top: number }
+  origin: { left: number; top: number },
+  // Viewport rects are scaled by any active CSS transform (e.g. the fluid
+  // zoom gesture); divide by domScale to get back to layout pixels.
+  domScale = 1
 ): LabelPlacement[] {
   return Array.from(
     headerContainer.querySelectorAll<HTMLElement>('[data-column-label]')
@@ -62,18 +66,25 @@ export function collectLabelPlacements(
     const rect = el.getBoundingClientRect();
     const cs = window.getComputedStyle(el);
     const fontSize = parseFloat(cs.fontSize) || 16;
+    const parsedLineHeight = parseFloat(cs.lineHeight);
+    // A unitless line-height computes to a multiplier in some engines.
+    const lineHeight = Number.isNaN(parsedLineHeight)
+      ? fontSize * 1.2
+      : parsedLineHeight < fontSize
+        ? parsedLineHeight * fontSize
+        : parsedLineHeight;
     return {
       text: el.dataset.columnLabel || el.textContent || '',
-      left: rect.left - origin.left,
-      top: rect.top - origin.top,
-      width: rect.width,
-      height: rect.height,
+      left: (rect.left - origin.left) / domScale,
+      top: (rect.top - origin.top) / domScale,
+      width: rect.width / domScale,
+      height: rect.height / domScale,
       font: `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`,
       color: cs.color,
       background: cs.backgroundColor,
       borderRadius: parseFloat(cs.borderRadius) || 0,
       paddingX: parseFloat(cs.paddingLeft) || 0,
-      lineHeight: parseFloat(cs.lineHeight) || fontSize * 1.2,
+      lineHeight,
     };
   });
 }
@@ -159,18 +170,19 @@ export async function renderMatrixToPngBlob(
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
 
-  // Match the DOM stacking order: points, then the HTML column labels, then
-  // the SVG overlay.
+  // Match the live painting order: points, then the SVG overlay, then the
+  // HTML column labels (positioned elements paint above the static SVG).
   for (const { canvas, left, top } of collectCanvasPlacements(canvasContainer)) {
     if (canvas.width === 0 || canvas.height === 0) continue;
     ctx.drawImage(canvas, left, top, canvas.width, canvas.height);
   }
-  if (headerContainer) {
-    const origin = svgEl.getBoundingClientRect();
-    drawLabelPlacements(ctx, collectLabelPlacements(headerContainer, origin));
-  }
   const svgImage = await loadImage(svgToDataUrl(svgEl));
   ctx.drawImage(svgImage, 0, 0, width, height);
+  if (headerContainer) {
+    const origin = svgEl.getBoundingClientRect();
+    const domScale = origin.width / width || 1;
+    drawLabelPlacements(ctx, collectLabelPlacements(headerContainer, origin, domScale));
+  }
 
   return new Promise((resolve, reject) => {
     out.toBlob(

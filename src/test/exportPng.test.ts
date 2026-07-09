@@ -70,6 +70,18 @@ describe('collectLabelPlacements', () => {
       height: 28,
     });
   });
+
+  it('normalizes viewport rects by the DOM scale factor', () => {
+    const container = document.createElement('div');
+    const label = document.createElement('span');
+    label.dataset.columnLabel = 'PC1';
+    label.getBoundingClientRect = () =>
+      ({ left: 130, top: 240, width: 60, height: 28 } as DOMRect);
+    container.appendChild(label);
+
+    const [placement] = collectLabelPlacements(container, { left: 100, top: 200 }, 2);
+    expect(placement).toMatchObject({ left: 15, top: 20, width: 30, height: 14 });
+  });
 });
 
 describe('wrapTextBreakAll', () => {
@@ -89,14 +101,13 @@ describe('wrapTextBreakAll', () => {
 });
 
 describe('drawLabelPlacements', () => {
-  it('paints a background then centered text lines', () => {
-    const calls: string[] = [];
-    const ctx = {
+  const makeCtx = (calls: string[], withRoundRect: boolean) =>
+    ({
       save: vi.fn(),
       restore: vi.fn(),
       beginPath: vi.fn(),
-      roundRect: vi.fn(() => calls.push('roundRect')),
-      rect: vi.fn(),
+      ...(withRoundRect ? { roundRect: vi.fn(() => calls.push('roundRect')) } : {}),
+      rect: vi.fn(() => calls.push('rect')),
       fill: vi.fn(() => calls.push('fill')),
       fillText: vi.fn((text: string) => calls.push(`text:${text}`)),
       measureText: (t: string) => ({ width: t.length * 10 }),
@@ -104,25 +115,35 @@ describe('drawLabelPlacements', () => {
       fillStyle: '',
       textAlign: '',
       textBaseline: '',
-    } as unknown as CanvasRenderingContext2D;
+    } as unknown as CanvasRenderingContext2D);
 
-    const placement: LabelPlacement = {
-      text: 'abcdef',
-      left: 10,
-      top: 20,
-      width: 46, // 30px of text space after 8px padding each side → 3 chars/line
-      height: 40,
-      font: '700 16px sans-serif',
-      color: 'rgb(17, 94, 89)',
-      background: 'rgba(240, 253, 250, 0.9)',
-      borderRadius: 4,
-      paddingX: 8,
-      lineHeight: 20,
-    };
+  const placement: LabelPlacement = {
+    text: 'abcdef',
+    left: 10,
+    top: 20,
+    width: 46, // 30px of text space after 8px padding each side → 3 chars/line
+    height: 40,
+    font: '700 16px sans-serif',
+    color: 'rgb(17, 94, 89)',
+    background: 'rgba(240, 253, 250, 0.9)',
+    borderRadius: 4,
+    paddingX: 8,
+    lineHeight: 20,
+  };
+
+  it('paints a background then centered text lines', () => {
+    const calls: string[] = [];
+    const ctx = makeCtx(calls, true);
     drawLabelPlacements(ctx, [placement]);
 
     expect(calls).toEqual(['roundRect', 'fill', 'text:abc', 'text:def']);
     expect(ctx.fillText).toHaveBeenCalledWith('abc', 33, 30); // centered, two lines
     expect(ctx.fillText).toHaveBeenCalledWith('def', 33, 50);
+  });
+
+  it('falls back to rect() when roundRect is unavailable', () => {
+    const calls: string[] = [];
+    drawLabelPlacements(makeCtx(calls, false), [placement]);
+    expect(calls).toEqual(['rect', 'fill', 'text:abc', 'text:def']);
   });
 });
