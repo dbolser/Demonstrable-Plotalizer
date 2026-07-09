@@ -497,10 +497,12 @@ const App: React.FC = () => {
     setHiddenCategories(next);
 
     if (hiding && categoryColorColumn && brushSelection?.selectedIds?.size) {
+      // O(selection) not O(data): __id is the row's position in `data`
+      // (assigned at load and never reordered), so ids index directly.
       const remaining = new Set<number>();
-      for (const row of data) {
-        if (!brushSelection.selectedIds.has(row.__id)) continue;
-        if (String(row[categoryColorColumn] ?? '') !== name) remaining.add(row.__id);
+      for (const id of brushSelection.selectedIds) {
+        const row = data[id];
+        if (row && String(row[categoryColorColumn] ?? '') !== name) remaining.add(id);
       }
       if (remaining.size !== brushSelection.selectedIds.size) {
         setBrushSelection(remaining.size === 0 ? null : { ...brushSelection, selectedIds: remaining });

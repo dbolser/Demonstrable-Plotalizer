@@ -643,9 +643,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
   // Memoized per-cell pairwise stats (issues #50/#36): brush-driven repaints
   // in highlight mode reuse the same fit/correlation instead of re-scanning
   // all rows. Keys fold in everything the stats depend on: column pair,
-  // scale types, data identity, and — in filter mode only, where the fitted
-  // subset changes with the selection — the selection hash.
+  // scale types, data identity, hidden-category state (which changes the
+  // fitted subset), and — in filter mode only, where the fitted subset
+  // changes with the selection — the selection hash.
   const pairStatsCacheRef = useRef<Map<string, PairStats>>(new Map());
+
+  // Key fragment for the hidden-category state: stats are fitted on
+  // visibleData, so toggling a category must not reuse stats cached under a
+  // different visibility state. '-' when nothing is hidden, keeping the
+  // cache warm across color mode/column changes that don't hide rows.
+  const hiddenStatsKey = colorState?.hasHidden ? colorState.hash : '-';
 
   // Reference-line + metrics overlay pass (issues #50/#36): drawn AFTER the
   // point pass onto the same canvas, inside the same paint task, so lines,
@@ -681,6 +688,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         xLog ? 'log' : 'linear',
         yLog ? 'log' : 'linear',
         dataStateHash,
+        hiddenStatsKey,
         filterMode,
         filterMode === 'filter' ? selectedStateHash : '-',
       ].join('|');
@@ -705,6 +713,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           yLog ? 'log' : 'linear',
           xLog ? 'log' : 'linear',
           dataStateHash,
+          hiddenStatsKey,
           filterMode,
           filterMode === 'filter' ? selectedStateHash : '-',
         ].join('|');
@@ -820,7 +829,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
 
     ctx.restore();
     ctx.globalAlpha = 1;
-  }, [showIdentityLine, showRegressionLine, showCorrelation, correlationMetric, tintCellBorders, size, padding, dataStateHash, filterMode, selectedStateHash]);
+  }, [showIdentityLine, showRegressionLine, showCorrelation, correlationMetric, tintCellBorders, size, padding, dataStateHash, hiddenStatsKey, filterMode, selectedStateHash]);
 
   // Scale-domain stats from the columnar store. Full-data stats were already
   // computed during the store's single build pass; only filter mode with an
