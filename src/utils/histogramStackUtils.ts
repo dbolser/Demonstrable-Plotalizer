@@ -1,7 +1,7 @@
 import { interpolateViridis } from 'd3';
 import type { DataPoint } from '../../types';
 import type { ColorState } from './colorUtils';
-import { CATEGORY_PALETTE, MISSING_COLOR, MISSING_SLOT, RAINBOW_BUCKETS } from './colorUtils';
+import { CATEGORY_PALETTE, HIDDEN_SLOT, MISSING_COLOR, MISSING_SLOT, RAINBOW_BUCKETS } from './colorUtils';
 
 // Issue #40: with a color mode active, histogram bars become stacked bars —
 // one segment per color group per bin. The continuous rainbow gradient is
@@ -20,7 +20,10 @@ export interface StackConfig {
   numStacks: number;
   /** One color per stack, plus MISSING_COLOR at index numStacks. */
   stackColors: string[];
-  /** Maps a ColorState slot to a stack index (MISSING_SLOT -> numStacks). */
+  /**
+   * Maps a ColorState slot to a stack index (MISSING_SLOT -> numStacks;
+   * HIDDEN_SLOT -> -1, meaning the row is excluded from the bar entirely).
+   */
   stackSlotFor: (slot: number) => number;
 }
 
@@ -30,8 +33,12 @@ export function getStackConfig(colorState: ColorState): StackConfig {
     return {
       numStacks,
       stackColors: [...CATEGORY_PALETTE, MISSING_COLOR],
+      // HIDDEN_SLOT must be checked before the >= numStacks catch-all,
+      // otherwise hidden rows would land in the gray missing stack.
       stackSlotFor: (slot: number) =>
-        slot === MISSING_SLOT || slot >= numStacks ? numStacks : slot,
+        slot === HIDDEN_SLOT
+          ? -1
+          : slot === MISSING_SLOT || slot >= numStacks ? numStacks : slot,
     };
   }
 
@@ -78,6 +85,7 @@ export function computeStackedBinCounts(
       const id = row.__id;
       const slot = id >= 0 && id < slotById.length ? slotById[id] : MISSING_SLOT;
       const stack = config.stackSlotFor(slot);
+      if (stack < 0) continue; // hidden category — excluded from the bar
       total[binIndex][stack]++;
       if (hasSelection && selectedIds.has(id)) {
         selected[binIndex][stack]++;

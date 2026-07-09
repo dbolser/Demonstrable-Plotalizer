@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Column, FilterMode, ColorMode } from '../types';
 import type { CorrelationKind } from '../src/utils/correlationUtils';
+import { CATEGORY_PALETTE } from '../src/utils/colorUtils';
 import type { ColorState } from '../src/utils/colorUtils';
 import type { FacetColumnSummary, FacetSelections } from '../src/utils/facetUtils';
 import { FileUpload } from './FileUpload';
@@ -64,6 +65,7 @@ interface ControlPanelProps {
   setColorMode: (mode: ColorMode) => void;
   categoryColorColumn: string | null;
   setCategoryColorColumn: (column: string | null) => void;
+  onToggleCategory: (name: string) => void;
   rainbowOrderColumn: string | null;
   onResetRainbowOrder: () => void;
   colorState: ColorState | null;
@@ -126,6 +128,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   setColorMode,
   categoryColorColumn,
   setCategoryColorColumn,
+  onToggleCategory,
   rainbowOrderColumn,
   onResetRainbowOrder,
   colorState,
@@ -583,22 +586,42 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                 ))}
               </select>
               {colorState?.categories && colorState.categories.length > 0 && (
-                <div className="mt-2 space-y-1" data-testid="category-legend">
-                  {colorState.categories.slice(0, 15).map(entry => (
-                    <div key={entry.name} className="flex items-center text-xs text-gray-700">
-                      <span
-                        className="inline-block w-3 h-3 rounded-sm mr-2 flex-shrink-0"
-                        style={{ backgroundColor: entry.color }}
-                        aria-hidden="true"
-                      />
-                      <span className="truncate" title={entry.name}>{entry.name}</span>
-                    </div>
-                  ))}
-                  {colorState.categories.length > 15 && (
-                    <p className="text-xs text-gray-500">
-                      +{colorState.categories.length - 15} more (colors repeat every 10 categories)
-                    </p>
-                  )}
+                <div className="mt-2" data-testid="category-legend">
+                  {/* Entries are sorted by count, descending — matching the
+                      paint z-order (biggest painted first, rarest on top). */}
+                  <div className="max-h-56 overflow-y-auto space-y-0.5 pr-1">
+                    {colorState.categories.map(entry => (
+                      <button
+                        key={entry.name}
+                        type="button"
+                        onClick={() => onToggleCategory(entry.name)}
+                        aria-pressed={!entry.hidden}
+                        title={entry.hidden ? `Show "${entry.name}"` : `Hide "${entry.name}"`}
+                        className={`w-full flex items-center text-xs rounded px-1 py-0.5 hover:bg-gray-100 transition-colors ${
+                          entry.hidden ? 'text-gray-400 line-through' : 'text-gray-700'
+                        }`}
+                      >
+                        <span
+                          className="inline-block w-3 h-3 rounded-sm mr-2 flex-shrink-0 border"
+                          style={
+                            entry.hidden
+                              ? { backgroundColor: 'transparent', borderColor: entry.color }
+                              : { backgroundColor: entry.color, borderColor: entry.color }
+                          }
+                          aria-hidden="true"
+                        />
+                        <span className="truncate" title={entry.name}>{entry.name}</span>
+                        <span className="ml-auto pl-2 text-gray-500 tabular-nums no-underline">
+                          {entry.count.toLocaleString()}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Click a category to hide/show its points.
+                    {colorState.categories.length > CATEGORY_PALETTE.length &&
+                      ` Colors repeat every ${CATEGORY_PALETTE.length} categories.`}
+                  </p>
                 </div>
               )}
             </div>

@@ -1,6 +1,7 @@
 /**
  * Minimal hand-rolled WebGL1 point-sprite renderer for the scatter matrix
- * (issue #33). No dependencies.
+ * (issue #33). No external dependencies (only the HIDDEN_SLOT sentinel
+ * from colorUtils).
  *
  * Architecture — "render one cell, blit into its 2D canvas":
  *
@@ -44,6 +45,8 @@
  *   approximate Canvas 2D's antialiased arcs.
  */
 
+import { HIDDEN_SLOT } from './colorUtils';
+
 /** Sentinel t for missing values; the vertex shader culls anything ≤ -9. */
 export const MISSING_T = -10;
 
@@ -73,8 +76,9 @@ void main() {
   vSlot = aSlot;
   vFlag = aFlag;
   gl_PointSize = uPointSize;
-  if (aX <= -9.0 || aY <= -9.0) {
-    // Missing value: outside the clip volume -> the point is culled.
+  if (aX <= -9.0 || aY <= -9.0 || aSlot < -0.5) {
+    // Missing value or hidden category (slot -1): outside the clip
+    // volume -> the point is culled.
     gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
     return;
   }
@@ -96,9 +100,11 @@ uniform sampler2D uPalette;
 uniform float uPaletteSize;
 uniform float uPointRadius;
 uniform float uPointSize;
+uniform float uSlotFilter;  // >= 0: draw only points of this slot (z-order passes)
 void main() {
   if (uPass < 0.5 && vFlag > 0.5) discard;
   if (uPass > 0.5 && uPass < 1.5 && vFlag < 0.5) discard;
+  if (uSlotFilter > -0.5 && abs(vSlot - uSlotFilter) > 0.25) discard;
   vec2 c = (gl_PointCoord - 0.5) * uPointSize;
   float dist = length(c);
   float mask = 1.0 - smoothstep(uPointRadius - 1.0, uPointRadius, dist);
@@ -158,7 +164,8 @@ export function buildNormalizedPositions(
  * Per-point palette slot attribute from ColorState.slotById (indexed by
  * __id) via the store's rowIds. Bucket rules mirror the 2D paint loop:
  * MISSING_SLOT, out-of-palette and out-of-bounds ids all land in the last
- * texel (the missing color).
+ * texel (the missing color); HIDDEN_SLOT becomes -1, which the vertex
+ * shader culls entirely.
  */
 export function buildSlotAttribute(
   slotById: Uint16Array,
@@ -168,7 +175,9 @@ export function buildSlotAttribute(
   const out = new Float32Array(rowIds.length);
   for (let i = 0; i < rowIds.length; i++) {
     const slot = slotById[rowIds[i]]; // undefined when __id out of bounds
-    out[i] = slot === undefined || slot >= numSlots ? numSlots : slot;
+    out[i] = slot === HIDDEN_SLOT
+      ? -1
+      : slot === undefined || slot >= numSlots ? numSlots : slot;
   }
   return out;
 }
@@ -264,6 +273,13 @@ export interface CellRenderOptions {
     palette: Uint8Array;
     /** Texel count == palette.length / 4. */
     paletteSize: number;
+    /**
+     * Category mode: draw one pass per slot, slot 0 first, so bigger
+     * categories (lower slots by construction) sit beneath rarer ones —
+     * matching the 2D path's batched-by-slot paint order. Off for rainbow
+     * (64 passes for an order that follows the gradient anyway).
+     */
+    zOrderBySlot?: boolean;
   } | null;
   filterMode: 'highlight' | 'filter';
 }
@@ -351,6 +367,7 @@ export class WebGLPointRenderer {
       [
         'uXRange', 'uYRange', 'uCanvasSize', 'uPointSize', 'uPass',
         'uUseTexture', 'uColor', 'uPalette', 'uPaletteSize', 'uPointRadius',
+        'uSlotFilter',
       ].map(name => [name, gl.getUniformLocation(program, name)])
     );
 
@@ -424,9 +441,9 @@ export class WebGLPointRenderer {
 
     const hasSelection = opts.flags !== null;
     if (!hasSelection) {
-      // Single pass over every point.
+      // Single pass over every point (per-slot passes in category mode).
       if (opts.color) {
-        this.draw(2, true, [0, 0, 0, 0.7], opts.count);
+        this.drawColored(2, 0.7, opts);
       } else {
         this.draw(2, false, colorToVec4('#4b5563', 0.7), opts.count);
       }
@@ -439,11 +456,28 @@ export class WebGLPointRenderer {
       this.draw(0, false, colorToVec4('#ccc', 0.3), opts.count);
     }
     if (opts.color) {
-      this.draw(1, true, [0, 0, 0, 0.8], opts.count);
+      this.drawColored(1, 0.8, opts);
     } else {
       this.draw(1, false, colorToVec4('#1e40af', 0.8), opts.count);
     }
     return true;
+  }
+
+  /**
+   * Textured (palette-colored) draw. With zOrderBySlot, one pass per
+   * palette texel in ascending slot order — slots are count-ranked in
+   * category mode, so the biggest categories are painted first and rare
+   * ones land on top (the missing-color texel last, like the 2D path).
+   */
+  private drawColored(pass: number, alpha: number, opts: CellRenderOptions): void {
+    const color = opts.color!;
+    if (!color.zOrderBySlot) {
+      this.draw(pass, true, [0, 0, 0, alpha], opts.count);
+      return;
+    }
+    for (let slot = 0; slot < color.paletteSize; slot++) {
+      this.draw(pass, true, [0, 0, 0, alpha], opts.count, slot);
+    }
   }
 
   dispose(): void {
@@ -466,11 +500,13 @@ export class WebGLPointRenderer {
     pass: number,
     useTexture: boolean,
     rgba: [number, number, number, number],
-    count: number
+    count: number,
+    slotFilter: number = -1
   ): void {
     const { gl } = this;
     gl.uniform1f(this.uniforms.uPass, pass);
     gl.uniform1f(this.uniforms.uUseTexture, useTexture ? 1 : 0);
+    gl.uniform1f(this.uniforms.uSlotFilter, slotFilter);
     gl.uniform4f(this.uniforms.uColor, rgba[0], rgba[1], rgba[2], rgba[3]);
     gl.drawArrays(gl.POINTS, 0, count);
   }
