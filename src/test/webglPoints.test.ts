@@ -10,6 +10,7 @@ import {
 } from '../utils/webglPoints';
 import {
   CATEGORY_PALETTE,
+  HIDDEN_SLOT,
   MISSING_SLOT,
   MISSING_COLOR,
   buildRainbowColors,
@@ -67,6 +68,13 @@ describe('buildSlotAttribute', () => {
     const rowIds = new Int32Array([0, 99]); // 99 is out of slotById bounds
     const attr = buildSlotAttribute(slotById, rowIds, 4);
     expect(Array.from(attr)).toEqual([4, 4]); // 7 >= numSlots, undefined -> 4
+  });
+
+  it('maps HIDDEN_SLOT to -1 so the vertex shader culls hidden categories', () => {
+    const slotById = new Uint16Array([1, HIDDEN_SLOT, MISSING_SLOT]);
+    const rowIds = new Int32Array([0, 1, 2]);
+    const attr = buildSlotAttribute(slotById, rowIds, 10);
+    expect(Array.from(attr)).toEqual([1, -1, 10]);
   });
 });
 

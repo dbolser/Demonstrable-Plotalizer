@@ -24,7 +24,7 @@ import {
 } from '../src/utils/webglPoints';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
 import { cellValueToNumber } from '../src/utils/cellValueUtils';
-import { MISSING_COLOR, MISSING_SLOT } from '../src/utils/colorUtils';
+import { HIDDEN_SLOT, MISSING_COLOR, MISSING_SLOT, removeHiddenIds } from '../src/utils/colorUtils';
 import type { ColorState } from '../src/utils/colorUtils';
 import { buildRenderKey } from '../src/utils/renderKeyUtils';
 import {
@@ -500,6 +500,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
               paletteKey: colorState.hash,
               palette: glPalette,
               paletteSize: colorState.slotColors.length + 1,
+              // Category slots are count-ranked, so slot-ordered passes
+              // paint big categories first and rare ones on top.
+              zOrderBySlot: colorState.mode === 'category',
             }
             : null,
           filterMode,
@@ -541,6 +544,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         // NaN self-compare — store values are finite or NaN by construction.
         if (x !== x || y !== y) continue;
 
+        // slot is undefined when __id is out of slotById's bounds (e.g. a
+        // transient render where colorState lags a data swap); undefined
+        // fails both sentinel checks, so guard it explicitly to avoid
+        // coloredCoords[undefined].push crashing the paint loop.
+        const slot = slotById[rowIds[i]];
+
+        // Toggled-off categories are not painted at all — checked before
+        // the selection branch so hidden points never show up dimmed.
+        if (slot === HIDDEN_SLOT) continue;
+
         if (hasSelection && !selectedFlags[i]) {
           // Unselected points keep the classic dimmed-gray treatment so the
           // selection stays readable even with many colors on screen; in
@@ -549,11 +562,6 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           continue;
         }
 
-        // slot is undefined when __id is out of slotById's bounds (e.g. a
-        // transient render where colorState lags a data swap); undefined
-        // fails both sentinel checks, so guard it explicitly to avoid
-        // coloredCoords[undefined].push crashing the paint loop.
-        const slot = slotById[rowIds[i]];
         const bucket = slot === undefined || slot === MISSING_SLOT || slot >= numSlots
           ? numSlots
           : slot;
@@ -561,6 +569,9 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       }
 
       drawPointBatch(ctx, dimmedCoords, '#ccc', 0.3);
+      // Ascending slot order = descending category size (slots are
+      // count-ranked), so the biggest categories are painted first and
+      // rarer ones stay visible on top.
       const alpha = hasSelection ? 0.8 : 0.7;
       for (let s = 0; s < numSlots; s++) {
         drawPointBatch(ctx, coloredCoords[s], slotColors[s], alpha);
@@ -618,6 +629,16 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
     () => filterData(data, selectedIds, filterMode),
     [data, selectedIds, filterMode]
   );
+
+  // Categories toggled off in the legend are excluded from the row-object
+  // consumers too (stacked histogram bars, regression/correlation fits), so
+  // hiding a category behaves like it isn't on screen. Same reference as
+  // filteredData when nothing is hidden, keeping downstream memos warm.
+  const visibleData = useMemo(() => {
+    if (!colorState?.hasHidden) return filteredData;
+    const { slotById } = colorState;
+    return filteredData.filter(row => slotById[row.__id] !== HIDDEN_SLOT);
+  }, [filteredData, colorState]);
 
   // Memoized per-cell pairwise stats (issues #50/#36): brush-driven repaints
   // in highlight mode reuse the same fit/correlation instead of re-scanning
@@ -1044,7 +1065,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         const yVector = columnStore.columns.get(colY.name);
         if (!xVector || !yVector) return;
         const grid = createSpatialGridFromColumns(xVector.values, yVector.values, xScales[i_visible], yScales[j_visible], size);
-        const newSelectedIds = getPointsInBrushFromColumns(grid, xVector.values, yVector.values, columnStore.rowIds, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, size);
+        // Toggled-off categories are invisible, so they must not be selectable.
+        const newSelectedIds = removeHiddenIds(getPointsInBrushFromColumns(grid, xVector.values, yVector.values, columnStore.rowIds, xScales[i_visible], yScales[j_visible], x0, y0, x1, y1, size), colorState);
         onBrush({ indexX: i_original, indexY: j_original, x0, y0, x1, y1, selectedIds: newSelectedIds });
       });
 
@@ -1271,7 +1293,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           if (!vector) return;
           const minVal = xScales[i_visible].invert(x0);
           const maxVal = xScales[i_visible].invert(x1);
-          const newSelectedIds = selectIdsInValueRange(columnStore, vector, minVal, maxVal);
+          const newSelectedIds = removeHiddenIds(selectIdsInValueRange(columnStore, vector, minVal, maxVal), colorState);
           onBrush({ indexX: i_original, indexY: columns.length, x0, y0: padding / 2, x1, y1: size - padding / 2, selectedIds: newSelectedIds });
         });
 
@@ -1317,7 +1339,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             : rowBinGenBase.thresholds(thresholds);
           // isFiniteCellValue (not isFinite(+v)): +null === 0, which would
           // bin rows with missing cells as real zeros. See histogramStackUtils.
-          const rowBins = rowBinGen(filteredData.filter(d => isFiniteCellValue(d[column.name])));
+          const rowBins = rowBinGen(visibleData.filter(d => isFiniteCellValue(d[column.name])));
 
           const config = getStackConfig(colorState);
           const { total, selected } = computeStackedBinCounts(rowBins, colorState, config, selectedIds);
@@ -1452,7 +1474,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           if (!vector) return;
           const minVal = yScales[j_visible].invert(y1);
           const maxVal = yScales[j_visible].invert(y0);
-          const newSelectedIds = selectIdsInValueRange(columnStore, vector, minVal, maxVal);
+          const newSelectedIds = removeHiddenIds(selectIdsInValueRange(columnStore, vector, minVal, maxVal), colorState);
           onBrush({ indexX: columns.length, indexY: j_original, x0: padding / 2, y0, x1: size - padding / 2, y1, selectedIds: newSelectedIds });
         });
 
@@ -1496,7 +1518,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
             : rowBinGenBase.thresholds(thresholds);
           // isFiniteCellValue (not isFinite(+v)): +null === 0, which would
           // bin rows with missing cells as real zeros. See histogramStackUtils.
-          const rowBins = rowBinGen(filteredData.filter(d => isFiniteCellValue(d[column.name])));
+          const rowBins = rowBinGen(visibleData.filter(d => isFiniteCellValue(d[column.name])));
 
           const config = getStackConfig(colorState);
           const { total, selected } = computeStackedBinCounts(rowBins, colorState, config, selectedIds);
@@ -1674,7 +1696,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
           task.yColName,
           task.xLog,
           task.yLog,
-          filteredData
+          visibleData
         );
         canvasRenderKeyRef.current.set(task.canvasKey, task.renderKey);
         maybeSnapshot(task);
@@ -1710,7 +1732,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (timeoutId !== null) clearTimeout(timeoutId);
     };
-  }, [data, columns, onBrush, filteredData, columnStore, selectedFlags, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, showCorrelation, tintCellBorders, correlationMetric, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
+  }, [data, columns, onBrush, visibleData, columnStore, selectedFlags, selectedIds, size, padding, n, showHistograms, useUniformLogBins, filterMode, brushSelection, visibleColumns, visibleIndexToOriginalIndex, renderPointsToCanvas, drawReferenceLines, showIdentityLine, showRegressionLine, showCorrelation, tintCellBorders, correlationMetric, xScales, yScales, cellCoordinates, dataStateHash, selectedStateHash, colorState, onRenderComplete, onRenderProgress]);
 
   return (
     <div

@@ -70,6 +70,9 @@ const App: React.FC = () => {
   const [colorMode, setColorMode] = useState<ColorMode>('none');
   const [categoryColorColumn, setCategoryColorColumn] = useState<string | null>(null);
   const [rainbowOrderColumn, setRainbowOrderColumn] = useState<string | null>(null);
+  // Categories toggled off via the legend (category color mode only).
+  // Scoped to the active category column — switching columns resets it.
+  const [hiddenCategories, setHiddenCategories] = useState<ReadonlySet<string>>(new Set());
   // Issue #41: per category column, the set of selected facet values.
   // Absent column = no facet (all rows pass).
   const [facetSelections, setFacetSelections] = useState<FacetSelections>(new Map());
@@ -179,6 +182,7 @@ const App: React.FC = () => {
     // Color-by columns are dataset-specific; the mode itself is kept so e.g.
     // rainbow-by-file-order survives loading a new file.
     setCategoryColorColumn(prev => (prev && allStringCols.includes(prev) ? prev : null));
+    setHiddenCategories(new Set()); // category values are dataset-specific
     // No string columns means category mode can't apply at all; drop back to
     // 'none' so the UI doesn't show a disabled "Category" option as selected.
     // (If other string columns exist, the mode is kept and the sub-select
@@ -471,9 +475,38 @@ const App: React.FC = () => {
   // keeps category colors and rainbow ranks stable while faceting — points
   // keep their color instead of reshuffling as rows are hidden.
   const colorState = useMemo(
-    () => computeColorState(data, colorMode, categoryColorColumn, rainbowOrderColumn),
-    [data, colorMode, categoryColorColumn, rainbowOrderColumn]
+    () => computeColorState(data, colorMode, categoryColorColumn, rainbowOrderColumn, hiddenCategories),
+    [data, colorMode, categoryColorColumn, rainbowOrderColumn, hiddenCategories]
   );
+
+  // Hidden-category state is only meaningful for the column it was toggled
+  // against; switching columns starts fresh with everything visible.
+  const handleSetCategoryColorColumn = useCallback((column: string | null) => {
+    setCategoryColorColumn(column);
+    setHiddenCategories(new Set());
+  }, []);
+
+  // Legend click: toggle a category off/on. When hiding, its rows are also
+  // dropped from any live brush selection so the data table and selection
+  // count can't include invisible points. (Re-showing does not re-add them —
+  // re-brush to pick them up again.)
+  const handleToggleCategory = useCallback((name: string) => {
+    const hiding = !hiddenCategories.has(name);
+    const next = new Set(hiddenCategories);
+    if (hiding) next.add(name); else next.delete(name);
+    setHiddenCategories(next);
+
+    if (hiding && categoryColorColumn && brushSelection?.selectedIds?.size) {
+      const remaining = new Set<number>();
+      for (const row of data) {
+        if (!brushSelection.selectedIds.has(row.__id)) continue;
+        if (String(row[categoryColorColumn] ?? '') !== name) remaining.add(row.__id);
+      }
+      if (remaining.size !== brushSelection.selectedIds.size) {
+        setBrushSelection(remaining.size === 0 ? null : { ...brushSelection, selectedIds: remaining });
+      }
+    }
+  }, [hiddenCategories, categoryColorColumn, brushSelection, data]);
 
   // Issue #36: sort columns by mean absolute correlation against the other
   // visible columns (descending). Visibility comes from displayColumns —
@@ -733,7 +766,8 @@ const App: React.FC = () => {
               colorMode={colorMode}
               setColorMode={setColorMode}
               categoryColorColumn={categoryColorColumn}
-              setCategoryColorColumn={setCategoryColorColumn}
+              setCategoryColorColumn={handleSetCategoryColorColumn}
+              onToggleCategory={handleToggleCategory}
               rainbowOrderColumn={rainbowOrderColumn}
               onResetRainbowOrder={() => setRainbowOrderColumn(null)}
               colorState={colorState}

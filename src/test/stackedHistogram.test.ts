@@ -45,6 +45,23 @@ describe('getStackConfig', () => {
     expect(config.numStacks).toBe(CATEGORY_PALETTE.length);
     expect(config.stackColors.slice(0, CATEGORY_PALETTE.length)).toEqual([...CATEGORY_PALETTE]);
   });
+
+  it('excludes hidden categories from the bars instead of graying them', () => {
+    const data: DataPoint[] = [
+      { __id: 0, cat: 'a', v: 1 },
+      { __id: 1, cat: 'b', v: 1 },
+      { __id: 2, cat: 'a', v: 2 },
+    ];
+    const state = computeColorState(data, 'category', 'cat', null, new Set(['b']))!;
+    const config = getStackConfig(state);
+    const bins = binRows(data, 'v', 2);
+    const { total } = computeStackedBinCounts(bins, state, config, NO_SELECTION);
+
+    // Only the two 'a' rows are counted; nothing lands in the gray
+    // missing stack.
+    expect(total.flat().reduce((s, c) => s + c, 0)).toBe(2);
+    expect(total.every(stacks => stacks[config.numStacks] === 0)).toBe(true);
+  });
 });
 
 describe('computeStackedBinCounts', () => {

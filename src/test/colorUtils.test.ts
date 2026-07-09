@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { DataPoint } from '../../types';
 import {
   CATEGORY_PALETTE,
+  HIDDEN_SLOT,
   MISSING_SLOT,
   MISSING_COLOR,
   RAINBOW_BUCKETS,
@@ -10,6 +11,7 @@ import {
   computeRainbowSlots,
   computeColorState,
   computeColorStateHash,
+  removeHiddenIds,
 } from '../utils/colorUtils';
 import { buildRenderKey } from '../utils/renderKeyUtils';
 
@@ -24,14 +26,40 @@ const makeRows = (values: (string | number | null)[], key = 'v'): DataPoint[] =>
   });
 
 describe('computeCategorySlots', () => {
-  it('assigns palette slots by first appearance and maps rows correctly', () => {
+  it('assigns palette slots by count rank (ties by first appearance) and maps rows', () => {
     const data = makeRows(['b', 'a', 'b', 'c', 'a']);
     const { slotById, categories } = computeCategorySlots(data, 'v');
 
+    // b and a tie at 2 rows (b appeared first), c has 1.
     expect(categories.map(c => c.name)).toEqual(['b', 'a', 'c']);
+    expect(categories.map(c => c.count)).toEqual([2, 2, 1]);
     expect(categories[0].color).toBe(CATEGORY_PALETTE[0]);
     expect(categories[1].color).toBe(CATEGORY_PALETTE[1]);
     expect(Array.from(slotById)).toEqual([0, 1, 0, 2, 1]);
+  });
+
+  it('ranks bigger categories into lower slots regardless of appearance order', () => {
+    // 'rare' appears first but has 1 row; 'common' has 3.
+    const data = makeRows(['rare', 'common', 'common', 'common', 'mid', 'mid']);
+    const { slotById, categories } = computeCategorySlots(data, 'v');
+
+    expect(categories.map(c => c.name)).toEqual(['common', 'mid', 'rare']);
+    expect(categories.map(c => c.count)).toEqual([3, 2, 1]);
+    // slot 0 = biggest category -> painted first (bottom of the z-order)
+    expect(slotById[1]).toBe(0);
+    expect(slotById[4]).toBe(1);
+    expect(slotById[0]).toBe(2);
+  });
+
+  it('gives rows of hidden categories the HIDDEN_SLOT sentinel, keeping slots stable', () => {
+    const data = makeRows(['b', 'a', 'b', 'c', 'a']);
+    const { slotById, categories } = computeCategorySlots(data, 'v', new Set(['a']));
+
+    // Hiding does not re-rank: 'a' keeps its legend position, color and count.
+    expect(categories.map(c => c.name)).toEqual(['b', 'a', 'c']);
+    expect(categories.map(c => c.hidden)).toEqual([false, true, false]);
+    expect(categories[1].color).toBe(CATEGORY_PALETTE[1]);
+    expect(Array.from(slotById)).toEqual([0, HIDDEN_SLOT, 0, 2, HIDDEN_SLOT]);
   });
 
   it('marks missing / empty values with the missing sentinel', () => {
@@ -153,6 +181,42 @@ describe('computeColorState', () => {
       computeColorStateHash('rainbow', null, 'depth'),
     ];
     expect(new Set(hashes).size).toBe(hashes.length);
+  });
+
+  it('hash changes when categories are hidden, so cached pixels are invalidated', () => {
+    const none = computeColorStateHash('category', 'species', null);
+    const one = computeColorStateHash('category', 'species', null, new Set(['a']));
+    const two = computeColorStateHash('category', 'species', null, new Set(['a', 'b']));
+    expect(new Set([none, one, two]).size).toBe(3);
+    // Insertion order of the set must not matter.
+    expect(computeColorStateHash('category', 'species', null, new Set(['b', 'a']))).toBe(two);
+  });
+
+  it('exposes hasHidden and hidden legend entries through computeColorState', () => {
+    const data = makeRows(['a', 'b', 'a']);
+    const visible = computeColorState(data, 'category', 'v', null)!;
+    expect(visible.hasHidden).toBe(false);
+
+    const hidden = computeColorState(data, 'category', 'v', null, new Set(['b']))!;
+    expect(hidden.hasHidden).toBe(true);
+    expect(hidden.categories!.find(c => c.name === 'b')!.hidden).toBe(true);
+    expect(hidden.hash).not.toBe(visible.hash);
+  });
+});
+
+describe('removeHiddenIds', () => {
+  it('returns the same set reference when nothing is hidden', () => {
+    const data = makeRows(['a', 'b']);
+    const state = computeColorState(data, 'category', 'v', null);
+    const ids = new Set([0, 1]);
+    expect(removeHiddenIds(ids, state)).toBe(ids);
+    expect(removeHiddenIds(ids, null)).toBe(ids);
+  });
+
+  it('drops rows of hidden categories from a brush hit set', () => {
+    const data = makeRows(['a', 'b', 'a', 'b']);
+    const state = computeColorState(data, 'category', 'v', null, new Set(['b']));
+    expect([...removeHiddenIds(new Set([0, 1, 2, 3]), state)].sort()).toEqual([0, 2]);
   });
 });
 

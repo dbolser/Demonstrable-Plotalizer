@@ -55,6 +55,7 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof ControlPanel
     setColorMode: vi.fn(),
     categoryColorColumn: null,
     setCategoryColorColumn: vi.fn(),
+    onToggleCategory: vi.fn(),
     rainbowOrderColumn: null,
     onResetRainbowOrder: vi.fn(),
     colorState: null,

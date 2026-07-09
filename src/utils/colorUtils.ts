@@ -3,7 +3,9 @@ import type { DataPoint, ColorMode } from '../../types';
 
 // Bump when the palette or gradient assignment scheme changes so cached
 // canvas pixels rendered with the old colors can never be restored.
-export const PALETTE_VERSION = 1;
+// v2: category slots are assigned by count rank (largest category = slot 0)
+// instead of first appearance.
+export const PALETTE_VERSION = 2;
 
 // Colorblind-friendly 10-color categorical palette (Tableau 10).
 // Hard-coded (rather than referencing d3.schemeTableau10) so the palette —
@@ -27,9 +29,19 @@ export const RAINBOW_BUCKETS = 64;
 export const MISSING_SLOT = 0xffff;
 export const MISSING_COLOR = '#9ca3af';
 
+// Sentinel slot for rows whose category has been toggled off in the legend.
+// Distinct from MISSING_SLOT: hidden rows are not painted at all (and are
+// excluded from brush hits and stacked histograms), whereas missing rows
+// stay visible in neutral gray.
+export const HIDDEN_SLOT = 0xfffe;
+
 export interface CategoryLegendEntry {
   name: string;
   color: string;
+  /** Rows carrying this category value (over the full dataset). */
+  count: number;
+  /** True when the category is toggled off via the legend. */
+  hidden: boolean;
 }
 
 export interface ColorState {
@@ -41,8 +53,10 @@ export interface ColorState {
   slotById: Uint16Array;
   /** Fill color per slot (10 palette colors or RAINBOW_BUCKETS viridis steps). */
   slotColors: string[];
-  /** Legend entries (category mode only). */
+  /** Legend entries, sorted by count descending (category mode only). */
   categories: CategoryLegendEntry[] | null;
+  /** True when at least one category is toggled off (HIDDEN_SLOT in use). */
+  hasHidden: boolean;
   /** Rainbow mode: column whose rank drives the gradient; null = file order. */
   orderColumn: string | null;
   /**
@@ -60,36 +74,51 @@ export function buildRainbowColors(buckets: number = RAINBOW_BUCKETS): string[] 
 
 /**
  * Category color slots: each row gets the palette slot of its category.
- * Categories are discovered in order of first appearance; the palette
- * cycles for datasets with more than CATEGORY_PALETTE.length categories
- * (slot = categoryIndex % palette size), so two categories may share a
- * color but the paint loop stays bounded at 10 fill batches per cell.
- * Rows whose value is missing/empty get MISSING_SLOT.
+ * Categories are ranked by row count, descending (ties broken by first
+ * appearance), and slot = rank % palette size. Ranking by size means the
+ * paint loops — which draw slot 0 first — put the biggest categories at
+ * the bottom of the z-order, so rarer categories stay visible on top.
+ * The palette cycles for datasets with more than CATEGORY_PALETTE.length
+ * categories, so two categories may share a color but the paint loop stays
+ * bounded at 10 fill batches per cell.
+ * Rows whose value is missing/empty get MISSING_SLOT; rows whose category
+ * is in `hiddenCategories` get HIDDEN_SLOT (not painted at all).
  */
 export function computeCategorySlots(
   data: DataPoint[],
-  columnName: string
+  columnName: string,
+  hiddenCategories: ReadonlySet<string> = new Set()
 ): { slotById: Uint16Array; categories: CategoryLegendEntry[] } {
   const slotById = new Uint16Array(data.length).fill(MISSING_SLOT);
-  const categoryIndex = new Map<string, number>();
-  const categories: CategoryLegendEntry[] = [];
 
+  // Pass 1: count rows per category value (Map preserves first appearance).
+  const counts = new Map<string, number>();
   for (const row of data) {
     const raw = row[columnName];
     if (raw === undefined || raw === null || raw === '') continue;
     const value = String(raw);
-    let idx = categoryIndex.get(value);
-    if (idx === undefined) {
-      idx = categories.length;
-      categoryIndex.set(value, idx);
-      categories.push({
-        name: value,
-        color: CATEGORY_PALETTE[idx % CATEGORY_PALETTE.length],
-      });
-    }
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  // Rank by count descending; Array.sort is stable, so equal counts keep
+  // first-appearance order.
+  const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+
+  const slotByValue = new Map<string, number>();
+  const categories: CategoryLegendEntry[] = ranked.map(([name, count], rank) => {
+    const hidden = hiddenCategories.has(name);
+    const slot = rank % CATEGORY_PALETTE.length;
+    slotByValue.set(name, hidden ? HIDDEN_SLOT : slot);
+    return { name, color: CATEGORY_PALETTE[slot], count, hidden };
+  });
+
+  // Pass 2: assign each row its category's slot.
+  for (const row of data) {
+    const raw = row[columnName];
+    if (raw === undefined || raw === null || raw === '') continue;
     const id = row.__id;
     if (id >= 0 && id < slotById.length) {
-      slotById[id] = idx % CATEGORY_PALETTE.length;
+      slotById[id] = slotByValue.get(String(raw))!;
     }
   }
 
@@ -159,12 +188,18 @@ export function computeRainbowSlots(
 export function computeColorStateHash(
   mode: ColorMode,
   categoryColumn: string | null,
-  orderColumn: string | null
+  orderColumn: string | null,
+  hiddenCategories: ReadonlySet<string> = new Set()
 ): string {
   if (mode === 'none') return 'none';
+  // Hidden categories change which points are painted, so they must
+  // invalidate cached pixels; sorted for a stable key.
+  const hidden = mode === 'category' && hiddenCategories.size > 0
+    ? `:hid[${[...hiddenCategories].sort().join('\u0001')}]`
+    : '';
   return `${mode}:${mode === 'category' ? categoryColumn ?? '' : ''}:${
     mode === 'rainbow' ? orderColumn ?? '' : ''
-  }:p${PALETTE_VERSION}`;
+  }:p${PALETTE_VERSION}${hidden}`;
 }
 
 /**
@@ -177,20 +212,22 @@ export function computeColorState(
   data: DataPoint[],
   mode: ColorMode,
   categoryColumn: string | null,
-  orderColumn: string | null
+  orderColumn: string | null,
+  hiddenCategories: ReadonlySet<string> = new Set()
 ): ColorState | null {
   if (mode === 'none' || data.length === 0) return null;
 
   if (mode === 'category') {
     if (!categoryColumn) return null;
-    const { slotById, categories } = computeCategorySlots(data, categoryColumn);
+    const { slotById, categories } = computeCategorySlots(data, categoryColumn, hiddenCategories);
     return {
       mode,
       slotById,
       slotColors: CATEGORY_PALETTE.slice(),
       categories,
+      hasHidden: categories.some(c => c.hidden),
       orderColumn: null,
-      hash: computeColorStateHash(mode, categoryColumn, null),
+      hash: computeColorStateHash(mode, categoryColumn, null, hiddenCategories),
     };
   }
 
@@ -199,7 +236,26 @@ export function computeColorState(
     slotById: computeRainbowSlots(data, orderColumn),
     slotColors: buildRainbowColors(),
     categories: null,
+    hasHidden: false,
     orderColumn,
     hash: computeColorStateHash(mode, null, orderColumn),
   };
+}
+
+/**
+ * Drop rows of hidden categories from a brush hit set, so toggled-off
+ * points cannot be selected invisibly. Returns the input set unchanged
+ * (same reference) when nothing is hidden.
+ */
+export function removeHiddenIds(
+  ids: Set<number>,
+  colorState: ColorState | null
+): Set<number> {
+  if (!colorState?.hasHidden || ids.size === 0) return ids;
+  const { slotById } = colorState;
+  const out = new Set<number>();
+  for (const id of ids) {
+    if (slotById[id] !== HIDDEN_SLOT) out.add(id);
+  }
+  return out;
 }
