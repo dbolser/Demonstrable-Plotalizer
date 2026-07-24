@@ -1,62 +1,71 @@
 name: Deploy to GitHub Pages
 
+# Publishes the production build to the ROOT of the `gh-pages` branch,
+# preserving the `previews/` directory (per-PR preview builds published by
+# pr-preview.yml). The repo's Pages source must be set to "Deploy from a
+# branch" -> gh-pages / root.
+
 on:
   # Trigger on pushes to main branch
   push:
     branches: [ main ]
-  
+
   # Allow manual trigger from Actions tab
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
-# Allow only one concurrent deployment
+# Serialize all gh-pages publishes (prod + PR previews share this group)
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  # Build job
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Build
         run: npm run build
         env:
           NODE_ENV: production
-      
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-      
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: ./dist
 
-  # Deployment job
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Publish to gh-pages (preserve previews/)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$REMOTE" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$REMOTE" ../site
+          else
+            mkdir ../site
+            git -C ../site init -b gh-pages
+            git -C ../site remote add origin "$REMOTE"
+          fi
+          # Replace everything at the root except the previews/ directory
+          find ../site -mindepth 1 -maxdepth 1 ! -name previews ! -name .git -exec rm -rf {} +
+          cp -a dist/. ../site/
+          touch ../site/.nojekyll
+          cd ../site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to deploy"
+          else
+            git commit -m "deploy: prod build for ${GITHUB_SHA}"
+            git push origin gh-pages
+          fi
