@@ -38,6 +38,7 @@ import {
   sanitizeFacetSelections,
 } from './src/utils/viewState';
 import type { ViewState } from './src/utils/viewState';
+import { computeSampleDefaults } from './src/utils/sampleDefaults';
 import type { PCAVarianceEntry } from './components/ControlPanel';
 import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
 
@@ -142,7 +143,9 @@ const App: React.FC = () => {
 
   // Apply a completed parse result to app state. `sourceUrl` is the URL the
   // CSV text was fetched from (null for local uploads / history / sample).
-  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>, sourceUrl: string | null = null) => {
+  // `isSample` marks loads of the bundled sample dataset, which get colorful
+  // demo defaults (see src/utils/sampleDefaults.ts).
+  const applyParseResult = useCallback((result: Papa.ParseResult<DataPoint>, sourceUrl: string | null = null, isSample = false) => {
     if (result.errors.length > 0) {
       console.error("CSV Parsing errors:", result.errors);
       alert("Error parsing CSV file. Check console for details.");
@@ -227,6 +230,24 @@ const App: React.FC = () => {
     setShowColumnGroups(false);
     setColumnGroups(new Map());
 
+    // First-impression demo defaults for the bundled sample dataset: color by
+    // species, tint cell borders by |r|, show regression lines. Pure decision
+    // logic lives in sampleDefaults.ts (PLAN.md guarantee (a)). A pending
+    // shared view wins outright — computeSampleDefaults returns null then and
+    // the #view= block below applies the sharer's settings instead. These are
+    // initial values only; every one of them remains a normal user toggle.
+    const sampleDefaults = computeSampleDefaults({
+      isSample,
+      hasPendingViewState: pendingViewRef.current !== null,
+      stringColumns: allStringCols,
+    });
+    if (sampleDefaults) {
+      setColorMode(sampleDefaults.colorMode);
+      setCategoryColorColumn(sampleDefaults.categoryColorColumn);
+      setTintCellBorders(sampleDefaults.tintCellBorders);
+      setShowRegressionLine(sampleDefaults.showRegressionLine);
+    }
+
     // Issue #43: a pending shared view (parsed from #view= at mount, or
     // waiting for a manual load of a locally-shared file) overrides the
     // defaults just set. This deliberately runs AFTER the standard resets
@@ -298,7 +319,7 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleDataLoaded = useCallback((csvText: string, sourceUrl: string | null = null) => {
+  const handleDataLoaded = useCallback((csvText: string, sourceUrl: string | null = null, isSample = false) => {
     // A new load supersedes any in-flight remote fetch or worker parse.
     const loadId = ++loadRequestIdRef.current;
     setIsUrlLoading(false);
@@ -326,7 +347,7 @@ const App: React.FC = () => {
           // sourceUrl travels with the parse it belongs to (and behind the
           // same request-id guard), so a slower, superseded load can never
           // clobber a newer one's source.
-          applyParseResult(result, sourceUrl);
+          applyParseResult(result, sourceUrl, isSample);
         },
       });
     });
@@ -343,7 +364,7 @@ const App: React.FC = () => {
       .then(csvText => {
         // Ignore this response if a newer load started in the meantime
         if (loadRequestIdRef.current !== requestId) return;
-        handleDataLoaded(csvText);
+        handleDataLoaded(csvText, null, true);
       })
       .catch(error => {
         console.error('Error loading sample data:', error);
