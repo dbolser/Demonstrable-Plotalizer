@@ -24,6 +24,9 @@ interface ControlPanelProps {
   onDataLoaded: (data: string, filename: string) => void;
   onLoadFromUrl: (url: string) => void;
   isUrlLoading: boolean;
+  /** Draft URL text, lifted to App so it survives the Data section collapsing. */
+  urlDraft: string;
+  onUrlDraftChange: (value: string) => void;
   filterMode: FilterMode;
   setFilterMode: (mode: FilterMode) => void;
   showHistograms: boolean;
@@ -87,6 +90,8 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
   onDataLoaded,
   onLoadFromUrl,
   isUrlLoading,
+  urlDraft,
+  onUrlDraftChange,
   filterMode,
   setFilterMode,
   showHistograms,
@@ -356,7 +361,12 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
         <FileUpload onDataLoaded={onDataLoaded} />
         <div className="mt-3">
           <p className="text-xs font-medium text-gray-500 mb-1">Load from URL</p>
-          <UrlInput onLoadUrl={onLoadFromUrl} isLoading={isUrlLoading} />
+          <UrlInput
+            onLoadUrl={onLoadFromUrl}
+            isLoading={isUrlLoading}
+            value={urlDraft}
+            onValueChange={onUrlDraftChange}
+          />
         </div>
         {stringColumns.length > 0 && (
           <p className="text-xs text-gray-500 mt-2">

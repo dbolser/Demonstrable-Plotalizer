@@ -5,17 +5,27 @@ interface UrlInputProps {
   onLoadUrl: (url: string) => void;
   /** Disables the submit button while a URL load is already in flight. */
   isLoading?: boolean;
+  /**
+   * Controlled draft URL. Lives in the parent so the typed text survives
+   * this component unmounting (e.g. when a collapsible panel section closes).
+   */
+  value: string;
+  onValueChange: (value: string) => void;
 }
 
 /** Input + button for loading a CSV/TSV file from a remote URL (issue #42). */
-export const UrlInput: React.FC<UrlInputProps> = ({ onLoadUrl, isLoading = false }) => {
-  const [url, setUrl] = useState('');
+export const UrlInput: React.FC<UrlInputProps> = ({
+  onLoadUrl,
+  isLoading = false,
+  value,
+  onValueChange,
+}) => {
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (isLoading) return;
-    const trimmed = url.trim();
+    const trimmed = value.trim();
     if (!trimmed) return;
     if (!isValidDataUrl(trimmed)) {
       setValidationError('Please enter a valid http(s) URL.');
@@ -30,9 +40,9 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onLoadUrl, isLoading = false
       <div className="flex space-x-2">
         <input
           type="text"
-          value={url}
+          value={value}
           onChange={e => {
-            setUrl(e.target.value);
+            onValueChange(e.target.value);
             if (validationError) setValidationError(null);
           }}
           placeholder="https://example.com/data.csv"
@@ -48,7 +58,7 @@ export const UrlInput: React.FC<UrlInputProps> = ({ onLoadUrl, isLoading = false
         </button>
       </div>
       {validationError && (
-        <p className="mt-1 text-xs text-red-600">{validationError}</p>
+        <p className="mt-1 text-xs text-red-600" role="alert">{validationError}</p>
       )}
     </form>
   );

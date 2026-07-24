@@ -80,6 +80,9 @@ const App: React.FC = () => {
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
   const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
   const [isUrlLoading, setIsUrlLoading] = useState<boolean>(false);
+  // Draft text of the URL input. Held here (not in UrlInput) so the typed URL
+  // survives the input unmounting, e.g. when the Data panel section collapses.
+  const [urlDraft, setUrlDraft] = useState<string>('');
   const [pcaVariance, setPcaVariance] = useState<PCAVarianceEntry[] | null>(null);
   // Issue #39: point coloring. rainbowOrderColumn = null means file order.
   const [colorMode, setColorMode] = useState<ColorMode>('none');
@@ -823,7 +826,12 @@ const App: React.FC = () => {
           </div>
           <div className="mt-4 text-left">
             <p className="text-sm font-medium text-gray-600 mb-1">Or load a CSV/TSV from a URL:</p>
-            <UrlInput onLoadUrl={handleLoadFromUrl} isLoading={isUrlLoading} />
+            <UrlInput
+              onLoadUrl={handleLoadFromUrl}
+              isLoading={isUrlLoading}
+              value={urlDraft}
+              onValueChange={setUrlDraft}
+            />
           </div>
           {urlErrorBanner}
         </div>
@@ -865,6 +873,8 @@ const App: React.FC = () => {
               onDataLoaded={handleFileUpload}
               onLoadFromUrl={handleLoadFromUrl}
               isUrlLoading={isUrlLoading}
+              urlDraft={urlDraft}
+              onUrlDraftChange={setUrlDraft}
               filterMode={filterMode}
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
@@ -924,18 +934,19 @@ const App: React.FC = () => {
             {/* Notices */}
             {urlErrorBanner}
             {columnLimitNotice && (
-              <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
+              <div role="status" aria-live="polite" className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
                 <span>{columnLimitNotice}</span>
                 <button
                   onClick={() => setColumnLimitNotice(null)}
                   className="ml-3 text-yellow-600 hover:text-yellow-800 font-bold"
+                  aria-label="Dismiss column limit notice"
                 >
                   ✕
                 </button>
               </div>
             )}
             {emptyColumnsNotice && (
-              <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
+              <div role="status" aria-live="polite" className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
                 <span>{emptyColumnsNotice}</span>
                 <button
                   onClick={() => setEmptyColumnsNotice(null)}
