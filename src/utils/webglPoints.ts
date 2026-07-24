@@ -50,7 +50,7 @@ import { HIDDEN_SLOT } from './colorUtils';
 /** Sentinel t for missing values; the vertex shader culls anything ≤ -9. */
 export const MISSING_T = -10;
 
-/** Point radius in px — matches the Canvas 2D `arc(x, y, 2.5, …)` path. */
+/** Point radius in px — shared by the WebGL sprite and the Canvas 2D `arc` fallback. */
 export const POINT_RADIUS = 2.5;
 // Sprite quad size: diameter + 1px of antialiasing margin on each side.
 const POINT_SPRITE_SIZE = POINT_RADIUS * 2 + 1;

@@ -21,6 +21,7 @@ import {
   buildNormalizedPositions,
   buildSlotAttribute,
   paletteToRgba,
+  POINT_RADIUS,
 } from '../src/utils/webglPoints';
 import { ImageDataLRU, totalSnapshotBytes } from '../src/utils/imageDataCache';
 import { cellValueToNumber } from '../src/utils/cellValueUtils';
@@ -155,8 +156,8 @@ const drawPointBatch = (
   for (let k = 0; k < coords.length; k += 2) {
     const sx = coords[k];
     const sy = coords[k + 1];
-    ctx.moveTo(sx + 2.5, sy);
-    ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI);
+    ctx.moveTo(sx + POINT_RADIUS, sy);
+    ctx.arc(sx, sy, POINT_RADIUS, 0, 2 * Math.PI);
   }
   ctx.fill();
 };
@@ -597,7 +598,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         if (x !== x || y !== y) continue;
 
         ctx.beginPath();
-        ctx.arc(xScale(x), yScale(y), 2.5, 0, 2 * Math.PI);
+        ctx.arc(xScale(x), yScale(y), POINT_RADIUS, 0, 2 * Math.PI);
         ctx.fill();
       }
     }
@@ -614,7 +615,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
         if (x !== x || y !== y) continue;
 
         ctx.beginPath();
-        ctx.arc(xScale(x), yScale(y), 2.5, 0, 2 * Math.PI);
+        ctx.arc(xScale(x), yScale(y), POINT_RADIUS, 0, 2 * Math.PI);
         ctx.fill();
       }
     }

@@ -47,7 +47,7 @@ The matrix uses **Canvas** (not SVG) for performance. Key patterns:
 
 1. **Canvas caching** - Rendered images are cached by a hash key; cache is invalidated when selection or data changes
 2. **Spatial grid (20×20)** - Each scatter plot divides its space into a grid; brush queries only check cells overlapping the brush rectangle instead of all points
-3. **Selection state hashing** (`selectionUtils.ts`) - `computeSelectedStateHash()` generates cache keys; currently uses first 5 IDs (known collision risk for large identical-prefix selections)
+3. **Selection state hashing** (`selectionUtils.ts`) - `computeSelectedStateHash()` generates cache keys from the full sorted ID set (size + order-independent additive hash)
 4. **Column visibility mapping** (`columnUtils.ts`) - `mapVisibleColumns()` translates drag-and-drop visible indices back to original column indices without re-rendering
 
 Points: gray `#ccc` at 30% opacity (unselected when something is selected), blue `#1e40af` at 80% opacity (selected).

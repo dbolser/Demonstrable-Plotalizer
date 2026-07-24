@@ -12,7 +12,7 @@ Treat these as **targets, not gates** — the app already falls back safely (`MA
 
 Visible columns cap at ~15–20 regardless of engine (k² cells is a pixel-budget problem, not a rendering one) — mitigated by grouping (#45) and correlation-based sorting (#36), not by faster drawing.
 
-Feature backlog, reconstructed July 2026 (branch/PR triage: #23 merged, #19/#22 closed with salvage notes, `feature/lines` and `feature/pages` deleted). Each item links to its tracking issue. Ordered roughly by dependency, not priority. `TODO.md` remains the code-quality backlog.
+Feature backlog, reconstructed July 2026 (branch/PR triage: #23 merged, #19/#22 closed with salvage notes, `feature/lines` and `feature/pages` deleted). Each item links to its tracking issue. Ordered roughly by dependency, not priority. (The legacy `TODO.md` code-quality backlog was audited and deleted in July 2026; small tech items now live in PLAN.md section 4.)
 
 ## Performance
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Column } from '../../types';
+import { filterColumns } from '../utils/columnUtils';
 
 // Helper function to simulate column reordering
 function reorderColumns(columns: Column[], dragIndex: number, hoverIndex: number): Column[] {
@@ -74,16 +75,12 @@ describe('Column Reordering Logic', () => {
 });
 
 describe('Column Filtering Logic', () => {
+  // Uses the real filterColumns utility (the same code path as the app),
+  // not a re-implementation of the filtering rules.
   it('should filter columns by substring match', () => {
     const columns = createMockColumns(['n_snps_mac1', 'n_genes_mac1', 'n_snps_mac2', 'other_column']);
-    const filter = 'mac1';
 
-    const filteredColumns = columns.map(col => ({
-      ...col,
-      visible: col.name.toLowerCase().includes(filter.toLowerCase())
-    }));
-
-    const visibleColumns = filteredColumns.filter(col => col.visible);
+    const visibleColumns = filterColumns(columns, 'mac1').filter(col => col.visible);
     expect(visibleColumns).toHaveLength(2);
     expect(visibleColumns[0].name).toBe('n_snps_mac1');
     expect(visibleColumns[1].name).toBe('n_genes_mac1');
@@ -91,27 +88,22 @@ describe('Column Filtering Logic', () => {
 
   it('should handle case insensitive filtering', () => {
     const columns = createMockColumns(['N_SNPS_MAC1', 'n_genes_mac1', 'OTHER_COLUMN']);
-    const filter = 'mac1';
 
-    const filteredColumns = columns.map(col => ({
-      ...col,
-      visible: col.name.toLowerCase().includes(filter.toLowerCase())
-    }));
-
-    const visibleColumns = filteredColumns.filter(col => col.visible);
+    const visibleColumns = filterColumns(columns, 'mac1').filter(col => col.visible);
     expect(visibleColumns).toHaveLength(2);
   });
 
   it('should show all columns when filter is empty', () => {
     const columns = createMockColumns(['col1', 'col2', 'col3']);
-    const filter: string = '';
 
-    const filteredColumns = columns.map(col => ({
-      ...col,
-      visible: filter === '' || col.name.toLowerCase().includes(filter.toLowerCase())
-    }));
-
-    const visibleColumns = filteredColumns.filter(col => col.visible);
+    const visibleColumns = filterColumns(columns, '').filter(col => col.visible);
     expect(visibleColumns).toHaveLength(3);
+  });
+
+  it('should support comma-separated OR terms (app semantics)', () => {
+    const columns = createMockColumns(['n_snps_mac1', 'n_genes_mac2', 'other_column']);
+
+    const visibleColumns = filterColumns(columns, 'mac1, mac2').filter(col => col.visible);
+    expect(visibleColumns.map(c => c.name)).toEqual(['n_snps_mac1', 'n_genes_mac2']);
   });
 });
