@@ -26,6 +26,8 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof ControlPanel
     onDataLoaded: vi.fn(),
     onLoadFromUrl: vi.fn(),
     isUrlLoading: false,
+    urlDraft: '',
+    onUrlDraftChange: vi.fn(),
     filterMode: 'highlight',
     setFilterMode: vi.fn(),
     showHistograms: false,

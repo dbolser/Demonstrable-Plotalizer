@@ -1,6 +1,6 @@
 # Working plan — next session pickup
 
-Written 2026-07-09 as a handoff. Context: waves 1–3 + perf sprint + share links shipped (see ROADMAP.md checkmarks, PRs #47–#75). `TODO.md` is the legacy code-quality list (mostly done); ROADMAP.md is the feature backlog; this file is **how Dan wants the work run** plus the prioritized queue.
+Written 2026-07-09 as a handoff. Context: waves 1–3 + perf sprint + share links shipped (see ROADMAP.md checkmarks, PRs #47–#75). ROADMAP.md is the feature backlog; this file is **how Dan wants the work run** plus the prioritized queue. (The legacy `TODO.md` code-quality list was audited and deleted in the 2026-07-24 polish PR — every item was verified done, stale, or fixed there.)
 
 ## Working agreement (Dan's process, 2026-07-09)
 
@@ -32,11 +32,9 @@ Mechanism: Pages now deploys from the `gh-pages` branch. `deploy.yml` (push to m
 | #35 cross-plot tracing | overlay layer + spatial grid | (b) |
 
 ### 4. Small known items (bundle into a polish PR when convenient)
-- `UrlInput` keeps typed URL in local state → lost when the Data section collapses (found during #70 triage).
-- `aria-live`/`role="status"` on the notice banners (declined as out-of-scope in #67 triage; fine as a bundled a11y pass).
-- Data table virtualization past the 1,000-row cap (noted in #60).
-- `TODO.md` final audit: verify remaining items are all done/stale, then delete the file.
 - RAF scheduler tuning: 4-cells/frame pacing floors large-matrix paints (~230ms for 56 cells) now that WebGL made per-cell cost tiny — revisit the budget.
+
+Done in the 2026-07-24 polish PR: UrlInput draft-state loss on Data-section collapse; `aria-live`/`role="status"` on the notice banners; data-table windowed rendering (1,000-row cap removed); `TODO.md` audited and deleted.
 
 ## Conventions the next agent must keep
 - Gates on every PR: `npm run typecheck` clean, `npm run test:run` green (perf thresholds are ×CI_FACTOR on CI), `npm run build` OK.

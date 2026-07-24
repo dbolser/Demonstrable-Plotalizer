@@ -1,7 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/react';
-import { DndProvider } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
 import App from '../../App';
 import { reorderColumns, filterColumns, mapVisibleColumns } from '../utils/columnUtils';
 import { filterData } from '../utils/dataUtils';

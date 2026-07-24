@@ -40,7 +40,7 @@ import {
 import type { ViewState } from './src/utils/viewState';
 import { computeSampleDefaults } from './src/utils/sampleDefaults';
 import type { PCAVarianceEntry } from './components/ControlPanel';
-import { clampTableHeight, computeDragHeight, isTableVisible, capTableRows } from './src/utils/tableLayout';
+import { clampTableHeight, computeDragHeight, isTableVisible } from './src/utils/tableLayout';
 
 const MAX_INITIAL_RENDER_POINTS = 15_000;
 
@@ -57,7 +57,7 @@ const App: React.FC = () => {
   // brush selection exists the table shows the selected rows (and still
   // auto-appears even with the toggle off, so the feature stays
   // discoverable); with the toggle on and no selection it shows the full
-  // dataset capped at the first TABLE_ROW_CAP rows.
+  // dataset (windowed rendering in DataTable keeps the DOM small).
   const [showDataTable, setShowDataTable] = useState<boolean>(false);
   const [useUniformLogBins, setUseUniformLogBins] = useState<boolean>(false);
   const [globalLogScale, setGlobalLogScale] = useState<boolean>(false);
@@ -81,6 +81,9 @@ const App: React.FC = () => {
   const [recentFiles, setRecentFiles] = useState<FileHistoryEntry[]>([]);
   const [urlLoadError, setUrlLoadError] = useState<string | null>(null);
   const [isUrlLoading, setIsUrlLoading] = useState<boolean>(false);
+  // Draft text of the URL input. Held here (not in UrlInput) so the typed URL
+  // survives the input unmounting, e.g. when the Data panel section collapses.
+  const [urlDraft, setUrlDraft] = useState<string>('');
   const [pcaVariance, setPcaVariance] = useState<PCAVarianceEntry[] | null>(null);
   // Issue #39: point coloring. rainbowOrderColumn = null means file order.
   const [colorMode, setColorMode] = useState<ColorMode>('none');
@@ -711,18 +714,15 @@ const App: React.FC = () => {
   const hasActiveSelection = !!brushSelection?.selectedIds && brushSelection.selectedIds.size > 0;
 
   // Memoized so per-frame render-progress updates don't re-filter large datasets.
-  const { tableRows, tableCapNote } = useMemo(() => {
+  // No row cap: DataTable renders the full dataset via windowed rendering.
+  const tableRows = useMemo(() => {
     if (hasActiveSelection && brushSelection?.selectedIds) {
-      return {
-        tableRows: facetedData.filter(row => brushSelection.selectedIds.has(row.__id)),
-        tableCapNote: null as string | null,
-      };
+      return facetedData.filter(row => brushSelection.selectedIds.has(row.__id));
     }
     if (showDataTable) {
-      const { rows, capNote } = capTableRows(facetedData);
-      return { tableRows: rows, tableCapNote: capNote };
+      return facetedData;
     }
-    return { tableRows: [], tableCapNote: null as string | null };
+    return [];
   }, [brushSelection, facetedData, hasActiveSelection, showDataTable]);
 
   const tableVisible = isTableVisible(showDataTable, hasActiveSelection) && tableRows.length > 0;
@@ -844,7 +844,12 @@ const App: React.FC = () => {
           </div>
           <div className="mt-4 text-left">
             <p className="text-sm font-medium text-gray-600 mb-1">Or load a CSV/TSV from a URL:</p>
-            <UrlInput onLoadUrl={handleLoadFromUrl} isLoading={isUrlLoading} />
+            <UrlInput
+              onLoadUrl={handleLoadFromUrl}
+              isLoading={isUrlLoading}
+              value={urlDraft}
+              onValueChange={setUrlDraft}
+            />
           </div>
           {urlErrorBanner}
         </div>
@@ -886,6 +891,8 @@ const App: React.FC = () => {
               onDataLoaded={handleFileUpload}
               onLoadFromUrl={handleLoadFromUrl}
               isUrlLoading={isUrlLoading}
+              urlDraft={urlDraft}
+              onUrlDraftChange={setUrlDraft}
               filterMode={filterMode}
               setFilterMode={setFilterMode}
               showHistograms={showHistograms}
@@ -945,18 +952,19 @@ const App: React.FC = () => {
             {/* Notices */}
             {urlErrorBanner}
             {columnLimitNotice && (
-              <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
+              <div role="status" aria-live="polite" className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
                 <span>{columnLimitNotice}</span>
                 <button
                   onClick={() => setColumnLimitNotice(null)}
                   className="ml-3 text-yellow-600 hover:text-yellow-800 font-bold"
+                  aria-label="Dismiss column limit notice"
                 >
                   ✕
                 </button>
               </div>
             )}
             {emptyColumnsNotice && (
-              <div className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
+              <div role="status" aria-live="polite" className="mx-4 mt-2 px-4 py-2 bg-yellow-50 border border-yellow-300 rounded-lg flex items-center justify-between text-sm text-yellow-800">
                 <span>{emptyColumnsNotice}</span>
                 <button
                   onClick={() => setEmptyColumnsNotice(null)}
@@ -1048,7 +1056,6 @@ const App: React.FC = () => {
                     columns={displayColumns}
                     stringColumns={stringColumns}
                     heading={hasActiveSelection ? 'Selected Data' : 'All Data'}
-                    capNote={tableCapNote}
                   />
                 </div>
               </>

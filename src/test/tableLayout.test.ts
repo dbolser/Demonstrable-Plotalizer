@@ -3,10 +3,11 @@ import {
   clampTableHeight,
   computeDragHeight,
   isTableVisible,
-  capTableRows,
+  computeRowWindow,
   TABLE_MIN_HEIGHT,
   TABLE_MAX_CONTAINER_FRACTION,
-  TABLE_ROW_CAP,
+  TABLE_ROW_HEIGHT,
+  TABLE_OVERSCAN,
 } from '../utils/tableLayout';
 
 describe('clampTableHeight (issue #49)', () => {
@@ -88,40 +89,96 @@ describe('isTableVisible (issue #56 visibility matrix)', () => {
   });
 });
 
-describe('capTableRows (issue #56 full-dataset cap)', () => {
-  const makeRows = (n: number) => Array.from({ length: n }, (_, i) => ({ __id: i }));
+describe('computeRowWindow (windowed table rendering, replaces the 1,000-row cap)', () => {
+  // Explicit rowHeight/overscan in most tests so the expectations are
+  // hand-computable; a couple of tests exercise the defaults.
 
-  it('returns all rows and no note when at or below the cap', () => {
-    const under = makeRows(10);
-    expect(capTableRows(under)).toEqual({ rows: under, capNote: null });
-
-    const exact = makeRows(TABLE_ROW_CAP);
-    const result = capTableRows(exact);
-    expect(result.rows).toHaveLength(TABLE_ROW_CAP);
-    expect(result.capNote).toBeNull();
+  it('renders from row 0 with no top spacer when scrolled to the top', () => {
+    const w = computeRowWindow(0, 400, 10000, 40, 5);
+    expect(w.start).toBe(0);
+    expect(w.padTop).toBe(0);
+    // 400/40 = 10 visible + 1 partial + 5 overscan = 16.
+    expect(w.end).toBe(16);
+    expect(w.padBottom).toBe((10000 - 16) * 40);
   });
 
-  it('caps rows above the limit and reports the counts', () => {
-    const { rows, capNote } = capTableRows(makeRows(30000));
-    expect(rows).toHaveLength(TABLE_ROW_CAP);
-    expect(rows[0].__id).toBe(0);
-    expect(rows[TABLE_ROW_CAP - 1].__id).toBe(TABLE_ROW_CAP - 1);
-    expect(capNote).toBe('Showing first 1,000 of 30,000 rows');
+  it('windows the middle of the dataset with spacers on both sides', () => {
+    // scrollTop 4000 / 40 = first row 100.
+    const w = computeRowWindow(4000, 400, 10000, 40, 5);
+    expect(w.start).toBe(95); // 100 - overscan
+    expect(w.end).toBe(116); // 100 + 10 + 1 + 5
+    expect(w.padTop).toBe(95 * 40);
+    expect(w.padBottom).toBe((10000 - 116) * 40);
   });
 
-  it('caps at exactly one row over the limit', () => {
-    const { rows, capNote } = capTableRows(makeRows(TABLE_ROW_CAP + 1));
-    expect(rows).toHaveLength(TABLE_ROW_CAP);
-    expect(capNote).toBe('Showing first 1,000 of 1,001 rows');
+  it('accounts for a partially scrolled row (non-multiple scrollTop)', () => {
+    // scrollTop 4010 still starts at row 100 (row 100 is partially visible).
+    const w = computeRowWindow(4010, 400, 10000, 40, 5);
+    expect(w.start).toBe(95);
+    expect(w.end).toBe(116);
   });
 
-  it('handles empty datasets', () => {
-    expect(capTableRows([])).toEqual({ rows: [], capNote: null });
+  it('clamps at the end of the dataset with no bottom spacer', () => {
+    const total = 100;
+    const w = computeRowWindow(total * 40, 400, total, 40, 5);
+    expect(w.end).toBe(total);
+    expect(w.padBottom).toBe(0);
+    expect(w.start).toBeLessThan(total);
   });
 
-  it('respects a custom cap', () => {
-    const { rows, capNote } = capTableRows(makeRows(5), 3);
-    expect(rows).toHaveLength(3);
-    expect(capNote).toBe('Showing first 3 of 5 rows');
+  it('spacer heights + rendered rows always add up to the full scroll height', () => {
+    const total = 30000;
+    for (const scrollTop of [0, 37, 1234, 599940, 30000 * 37]) {
+      const w = computeRowWindow(scrollTop, 500, total);
+      const rendered = (w.end - w.start) * TABLE_ROW_HEIGHT;
+      expect(w.padTop + rendered + w.padBottom).toBe(total * TABLE_ROW_HEIGHT);
+    }
+  });
+
+  it('keeps the DOM row count ~constant regardless of dataset size', () => {
+    const small = computeRowWindow(0, 400, 100, 40, 5);
+    const huge = computeRowWindow(600000, 400, 1_000_000, 40, 5);
+    const domRows = (w: { start: number; end: number }) => w.end - w.start;
+    expect(domRows(huge)).toBeLessThanOrEqual(10 + 1 + 2 * 5);
+    expect(domRows(small)).toBeLessThanOrEqual(10 + 1 + 2 * 5);
+  });
+
+  it('renders everything (no spacers) when the dataset fits in the viewport', () => {
+    const w = computeRowWindow(0, 400, 5, 40, 5);
+    expect(w).toEqual({ start: 0, end: 5, padTop: 0, padBottom: 0 });
+  });
+
+  it('handles an empty dataset', () => {
+    expect(computeRowWindow(0, 400, 0)).toEqual({ start: 0, end: 0, padTop: 0, padBottom: 0 });
+    expect(computeRowWindow(500, 400, 0)).toEqual({ start: 0, end: 0, padTop: 0, padBottom: 0 });
+  });
+
+  it('clamps a stale scrollTop after the dataset shrinks', () => {
+    // Scrolled deep into 30k rows, then the data becomes 50 rows (e.g. a
+    // brush selection replaced the full dataset).
+    const w = computeRowWindow(30000 * 40, 400, 50, 40, 5);
+    expect(w.start).toBeGreaterThanOrEqual(0);
+    expect(w.start).toBeLessThan(50);
+    expect(w.end).toBe(50);
+    expect(w.padBottom).toBe(0);
+  });
+
+  it('clamps negative overscroll (rubber-banding) to the top', () => {
+    const w = computeRowWindow(-120, 400, 1000, 40, 5);
+    expect(w.start).toBe(0);
+    expect(w.padTop).toBe(0);
+  });
+
+  it('treats a zero/negative viewport as rendering only overscan + first row', () => {
+    const w = computeRowWindow(0, 0, 1000, 40, 5);
+    expect(w.start).toBe(0);
+    expect(w.end).toBe(6); // 0 visible + 1 partial + 5 overscan
+  });
+
+  it('uses TABLE_ROW_HEIGHT and TABLE_OVERSCAN as defaults', () => {
+    const w = computeRowWindow(TABLE_ROW_HEIGHT * 50, 370, 10000);
+    expect(w.start).toBe(50 - TABLE_OVERSCAN);
+    expect(w.end).toBe(50 + Math.ceil(370 / TABLE_ROW_HEIGHT) + 1 + TABLE_OVERSCAN);
+    expect(w.padTop).toBe((50 - TABLE_OVERSCAN) * TABLE_ROW_HEIGHT);
   });
 });
