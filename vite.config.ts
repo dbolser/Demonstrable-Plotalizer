@@ -15,8 +15,12 @@ export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
     const buildDate = new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
     return {
-      // GitHub Pages uses /<repo-name>/ as the base path
-      base: process.env.NODE_ENV === 'production' ? '/Demonstrable-Plotalizer/' : '/',
+      // GitHub Pages uses /<repo-name>/ as the base path.
+      // VITE_BASE_PATH overrides it (used by PR preview builds to deploy
+      // under /Demonstrable-Plotalizer/previews/pr-<N>/).
+      base:
+        process.env.VITE_BASE_PATH ??
+        (process.env.NODE_ENV === 'production' ? '/Demonstrable-Plotalizer/' : '/'),
       server: {
         port: 3000,
         host: '0.0.0.0',

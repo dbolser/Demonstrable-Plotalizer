@@ -1,0 +1,98 @@
+name: PR Preview
+
+# Builds the PR head with a per-PR base path and publishes it to
+# previews/pr-<N>/ on the gh-pages branch, then posts/updates a sticky
+# comment on the PR with the preview URL. Same-repo PRs only (the
+# GITHUB_TOKEN on fork PRs is read-only, and we don't want to deploy
+# untrusted code to our Pages site anyway).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Serialize all gh-pages publishes (shared with deploy.yml)
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.number }}
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with preview base path
+        run: npm run build
+        env:
+          NODE_ENV: production
+          VITE_BASE_PATH: /Demonstrable-Plotalizer/previews/pr-${{ github.event.number }}/
+
+      - name: Publish to gh-pages previews/pr-${{ github.event.number }}/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads "$REMOTE" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "$REMOTE" ../site
+          else
+            mkdir ../site
+            git -C ../site init -b gh-pages
+            git -C ../site remote add origin "$REMOTE"
+          fi
+          rm -rf "../site/previews/pr-${PR_NUMBER}"
+          mkdir -p "../site/previews/pr-${PR_NUMBER}"
+          cp -a dist/. "../site/previews/pr-${PR_NUMBER}/"
+          touch ../site/.nojekyll
+          cd ../site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No changes to deploy"
+          else
+            git commit -m "preview: pr-${PR_NUMBER} @ ${GITHUB_SHA}"
+            git push origin gh-pages
+          fi
+
+      - name: Comment preview URL on PR (sticky)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          MARKER="<!-- pr-preview-url -->"
+          URL="https://dbolser.github.io/Demonstrable-Plotalizer/previews/pr-${PR_NUMBER}/"
+          BODY="${MARKER}
+          ### Preview deployment
+
+          | Preview | Commit |
+          |---|---|
+          | ${URL} | ${{ github.event.pull_request.head.sha }} |
+
+          Published to \`previews/pr-${PR_NUMBER}/\` on \`gh-pages\`; updated on every push, removed when the PR closes. Boot check: \`node checks/preview-boot.mjs ${URL}\`"
+          COMMENT_ID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq "[.[] | select(.body | startswith(\"${MARKER}\"))][0].id // empty")
+          if [ -n "$COMMENT_ID" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${COMMENT_ID}" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -f body="$BODY" >/dev/null
+          fi

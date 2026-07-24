@@ -1,0 +1,45 @@
+name: PR Preview Cleanup
+
+# Removes previews/pr-<N>/ from the gh-pages branch when a PR closes
+# (merged or not). Counterpart to pr-preview.yml.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+# Serialize all gh-pages publishes (shared with deploy.yml / pr-preview.yml)
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.number }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Remove previews/pr-${{ github.event.number }}/ from gh-pages
+        run: |
+          set -euo pipefail
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git ls-remote --exit-code --heads "$REMOTE" gh-pages >/dev/null 2>&1; then
+            echo "No gh-pages branch; nothing to clean up"
+            exit 0
+          fi
+          git clone --depth 1 --branch gh-pages "$REMOTE" site
+          if [ ! -d "site/previews/pr-${PR_NUMBER}" ]; then
+            echo "No preview directory for pr-${PR_NUMBER}; nothing to clean up"
+            exit 0
+          fi
+          rm -rf "site/previews/pr-${PR_NUMBER}"
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "preview: remove pr-${PR_NUMBER} (PR closed)"
+          git push origin gh-pages
