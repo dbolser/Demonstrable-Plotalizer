@@ -1,15 +1,13 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useLayoutEffect, useCallback } from 'react';
 import type { DataPoint, Column } from '../types';
+import { computeRowWindow, TABLE_ROW_HEIGHT } from '../src/utils/tableLayout';
 
 interface DataTableProps {
   data: DataPoint[];
   columns: Column[];
   stringColumns: string[];
-  maxRows?: number;
   /** Panel heading; defaults to "Selected Data" for selection views. */
   heading?: string;
-  /** Optional "Showing first X of N rows" note when the data was capped. */
-  capNote?: string | null;
 }
 
 type SortConfig = {
@@ -17,18 +15,41 @@ type SortConfig = {
     direction: 'asc' | 'desc';
 } | null;
 
+/**
+ * Data table with windowed ("virtualized") rendering: only the rows in the
+ * scroll viewport (plus a small overscan) exist in the DOM, with spacer rows
+ * standing in for the rest. The full dataset — 30k+ rows — is scrollable
+ * without a row cap and without DOM blowup. Rows have a fixed height
+ * (TABLE_ROW_HEIGHT); the windowing math lives in src/utils/tableLayout.ts.
+ */
 export const DataTable: React.FC<DataTableProps> = ({
   data,
   columns,
   stringColumns,
-  maxRows = 20,
-  heading = 'Selected Data',
-  capNote = null
+  heading = 'Selected Data'
 }) => {
-  const [rawPage, setCurrentPage] = useState(0);
     const [sortConfig, setSortConfig] = useState<SortConfig>(null);
+    const [scrollTop, setScrollTop] = useState(0);
+    const [viewportHeight, setViewportHeight] = useState(400);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const visibleColumns = columns.filter(c => c.visible);
+
+    // Keep viewportHeight in sync with the container (the table panel is
+    // user-resizable via the divider, so it changes outside of scrolling).
+    useLayoutEffect(() => {
+        const el = scrollContainerRef.current;
+        if (!el) return;
+        setViewportHeight(el.clientHeight);
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(() => setViewportHeight(el.clientHeight));
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
+
+    const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+        setScrollTop(e.currentTarget.scrollTop);
+    }, []);
 
     // Sort data based on current sort configuration
     const sortedData = useMemo(() => {
@@ -60,14 +81,13 @@ export const DataTable: React.FC<DataTableProps> = ({
     }, [data, sortConfig]);
 
     const totalRows = sortedData.length;
-  const totalPages = Math.ceil(totalRows / maxRows);
-  // Clamp: the dataset can shrink under us (e.g. switching from the full
-  // dataset to a small selection), which would otherwise strand us on an
-  // out-of-range page.
-  const currentPage = Math.min(rawPage, Math.max(0, totalPages - 1));
-  const startIdx = currentPage * maxRows;
-  const endIdx = Math.min(startIdx + maxRows, totalRows);
-    const pageData = sortedData.slice(startIdx, endIdx);
+    const { start, end, padTop, padBottom } = computeRowWindow(
+        scrollTop,
+        viewportHeight,
+        totalRows
+    );
+    const windowRows = sortedData.slice(start, end);
+    const columnCount = stringColumns.length + visibleColumns.length;
 
     const handleSort = (key: string) => {
         let direction: 'asc' | 'desc' = 'asc';
@@ -75,7 +95,9 @@ export const DataTable: React.FC<DataTableProps> = ({
             direction = 'desc';
         }
         setSortConfig({ key, direction });
-        setCurrentPage(0); // Reset to first page when sorting
+        // Jump back to the top so the new order is seen from its start.
+        if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+        setScrollTop(0);
     };
 
   if (totalRows === 0) {
@@ -89,36 +111,16 @@ export const DataTable: React.FC<DataTableProps> = ({
           <h3 className="text-lg font-semibold text-gray-800">
             {heading} ({totalRows.toLocaleString()} row{totalRows !== 1 ? 's' : ''})
           </h3>
-          {capNote && (
-            <span className="text-sm text-amber-700">{capNote}</span>
-          )}
         </div>
-        {totalPages > 1 && (
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-              disabled={currentPage === 0}
-              className="px-3 py-1 bg-gray-200 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300"
-            >
-              ← Prev
-            </button>
-            <span className="text-sm text-gray-600">
-              Page {currentPage + 1} of {totalPages}
-            </span>
-            <button
-              onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
-              disabled={currentPage >= totalPages - 1}
-              className="px-3 py-1 bg-gray-200 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-300"
-            >
-              Next →
-            </button>
-          </div>
-        )}
       </div>
 
-          <div className="overflow-auto border border-gray-300 rounded-lg flex-1">
+          <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              className="overflow-auto border border-gray-300 rounded-lg flex-1"
+          >
         <table className="min-w-full divide-y divide-gray-300">
-          <thead className="bg-gray-50">
+          <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
               {stringColumns.map(colName => (
                 <th
@@ -155,35 +157,52 @@ export const DataTable: React.FC<DataTableProps> = ({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {pageData.map((row, idx) => (
-              <tr key={row.__id} className={idx % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                {stringColumns.map(colName => (
-                  <td key={colName} className="px-3 py-2 text-sm text-gray-900 border-r border-gray-200 font-medium">
-                    {String(row[colName] ?? '')}
-                  </td>
-                ))}
-                {visibleColumns.map(col => {
-                  const value = row[col.name];
-                  const displayValue = typeof value === 'number'
-                    ? value.toLocaleString(undefined, { maximumFractionDigits: 4 })
-                    : String(value ?? '');
-                  return (
-                    <td
-                      key={col.name}
-                      className="px-3 py-2 text-sm text-gray-700 font-mono"
-                    >
-                      {displayValue}
-                    </td>
-                  );
-                })}
+            {padTop > 0 && (
+              <tr aria-hidden="true" style={{ height: padTop }}>
+                <td colSpan={columnCount} className="p-0" />
               </tr>
-            ))}
+            )}
+            {windowRows.map((row, idx) => {
+              const rowIndex = start + idx;
+              return (
+                <tr
+                  key={row.__id}
+                  style={{ height: TABLE_ROW_HEIGHT }}
+                  className={rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'}
+                >
+                  {stringColumns.map(colName => (
+                    <td key={colName} className="px-3 py-2 text-sm text-gray-900 border-r border-gray-200 font-medium whitespace-nowrap">
+                      {String(row[colName] ?? '')}
+                    </td>
+                  ))}
+                  {visibleColumns.map(col => {
+                    const value = row[col.name];
+                    const displayValue = typeof value === 'number'
+                      ? value.toLocaleString(undefined, { maximumFractionDigits: 4 })
+                      : String(value ?? '');
+                    return (
+                      <td
+                        key={col.name}
+                        className="px-3 py-2 text-sm text-gray-700 font-mono whitespace-nowrap"
+                      >
+                        {displayValue}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+            {padBottom > 0 && (
+              <tr aria-hidden="true" style={{ height: padBottom }}>
+                <td colSpan={columnCount} className="p-0" />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
           <div className="mt-2 text-xs text-gray-500 flex-shrink-0">
-        Showing {startIdx + 1}-{endIdx} of {totalRows.toLocaleString()} row{totalRows !== 1 ? 's' : ''}
+        Showing rows {(start + 1).toLocaleString()}-{end.toLocaleString()} of {totalRows.toLocaleString()}
       </div>
     </div>
   );

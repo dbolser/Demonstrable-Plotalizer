@@ -7,8 +7,16 @@ export const TABLE_MIN_HEIGHT = 80;
 /** The table panel may take up at most this fraction of the main area. */
 export const TABLE_MAX_CONTAINER_FRACTION = 0.7;
 
-/** Max rows shown when displaying the full (unselected) dataset. */
-export const TABLE_ROW_CAP = 1000;
+/**
+ * Fixed height of one data-table row in px. Rows are py-2 (8px top/bottom)
+ * around a text-sm line (20px) = 36px content, plus the 1px collapsed
+ * divide-y border. Cells use whitespace-nowrap so content can never wrap
+ * and change this. The windowing math (computeRowWindow) depends on it.
+ */
+export const TABLE_ROW_HEIGHT = 37;
+
+/** Extra rows rendered above/below the visible window to hide scroll gaps. */
+export const TABLE_OVERSCAN = 5;
 
 /**
  * Clamp a desired table height to [TABLE_MIN_HEIGHT, 70% of the container].
@@ -50,23 +58,51 @@ export function isTableVisible(showTable: boolean, hasSelection: boolean): boole
   return showTable || hasSelection;
 }
 
-export interface CappedRows<T> {
-  rows: T[];
-  /** Human-readable note when rows were capped, otherwise null. */
-  capNote: string | null;
+export interface RowWindow {
+  /** First rendered row index (inclusive). */
+  start: number;
+  /** One past the last rendered row index (exclusive). */
+  end: number;
+  /** Spacer height above the rendered rows, in px. */
+  padTop: number;
+  /** Spacer height below the rendered rows, in px. */
+  padBottom: number;
 }
 
 /**
- * Cap a full-dataset view at `cap` rows with a "Showing first X of N rows"
- * note. Selection views are never capped (a brush selection is already
- * bounded by what the user swept).
+ * Windowed-rendering math for the data table: given the scroll position and
+ * viewport of the scroll container, return which fixed-height rows to render
+ * plus the spacer heights that stand in for the off-screen rows. Keeps the
+ * DOM row count ~constant regardless of dataset size (30k+ rows scroll with
+ * only a few dozen <tr> elements mounted).
+ *
+ * Pure and clamped: any scrollTop/viewportHeight (including stale values
+ * after the dataset shrinks, or negative overscroll) yields a valid window.
  */
-export function capTableRows<T>(rows: T[], cap: number = TABLE_ROW_CAP): CappedRows<T> {
-  if (rows.length <= cap) {
-    return { rows, capNote: null };
+export function computeRowWindow(
+  scrollTop: number,
+  viewportHeight: number,
+  totalRows: number,
+  rowHeight: number = TABLE_ROW_HEIGHT,
+  overscan: number = TABLE_OVERSCAN
+): RowWindow {
+  if (totalRows <= 0 || rowHeight <= 0) {
+    return { start: 0, end: 0, padTop: 0, padBottom: 0 };
   }
+  // First row any part of which is at/below the top edge of the viewport,
+  // clamped so stale scroll positions (dataset shrank) stay in range.
+  const first = Math.min(
+    Math.max(0, Math.floor(scrollTop / rowHeight)),
+    totalRows - 1
+  );
+  // +1 covers the partially-visible row at the bottom edge.
+  const visibleCount = Math.ceil(Math.max(0, viewportHeight) / rowHeight) + 1;
+  const start = Math.max(0, first - overscan);
+  const end = Math.min(totalRows, first + visibleCount + overscan);
   return {
-    rows: rows.slice(0, cap),
-    capNote: `Showing first ${cap.toLocaleString('en-US')} of ${rows.length.toLocaleString('en-US')} rows`,
+    start,
+    end,
+    padTop: start * rowHeight,
+    padBottom: (totalRows - end) * rowHeight,
   };
 }
