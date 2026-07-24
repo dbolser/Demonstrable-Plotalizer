@@ -72,31 +72,75 @@ describe('RAF-chunked canvas rendering', () => {
     });
 
     it('reports progress for multi-frame renders', async () => {
-        // 6 visible columns -> 30 brushable cells -> multiple frames at 4 cells/frame
-        const columns: Column[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(name => ({
-            name,
-            scale: 'linear' as const,
-            visible: true,
-        }));
-        const data: DataPoint[] = Array.from({ length: 20 }, (_, i) => ({
-            __id: i,
-            a: i, b: i * 2, c: i * 3, d: i * 4, e: i * 5, f: i * 6,
-        }));
+        // 6 visible columns -> 30 brushable cells. Pacing is time-budget
+        // driven, so cheap cells could all fit in one frame; simulate
+        // expensive cells by advancing performance.now() ~5ms per call so the
+        // 12ms frame budget exhausts after a few cells and the render is
+        // guaranteed to span multiple frames.
+        let fakeNow = 0;
+        const nowSpy = vi
+            .spyOn(performance, 'now')
+            .mockImplementation(() => (fakeNow += 5));
+        try {
+            const columns: Column[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(name => ({
+                name,
+                scale: 'linear' as const,
+                visible: true,
+            }));
+            const data: DataPoint[] = Array.from({ length: 20 }, (_, i) => ({
+                __id: i,
+                a: i, b: i * 2, c: i * 3, d: i * 4, e: i * 5, f: i * 6,
+            }));
 
-        const onRenderComplete = vi.fn();
-        const onRenderProgress = vi.fn();
-        render(
-            <DndProvider backend={HTML5Backend}>
-                <ScatterPlotMatrix {...makeProps({ data, columns, onRenderComplete, onRenderProgress })} />
-            </DndProvider>
-        );
+            const onRenderComplete = vi.fn();
+            const onRenderProgress = vi.fn();
+            render(
+                <DndProvider backend={HTML5Backend}>
+                    <ScatterPlotMatrix {...makeProps({ data, columns, onRenderComplete, onRenderProgress })} />
+                </DndProvider>
+            );
 
-        await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+            await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
 
-        expect(onRenderProgress).toHaveBeenCalled();
-        const lastCall = onRenderProgress.mock.calls[onRenderProgress.mock.calls.length - 1];
-        // Final progress report covers all 30 brushable cells (6x6 minus diagonal)
-        expect(lastCall).toEqual([30, 30]);
+            expect(onRenderProgress).toHaveBeenCalled();
+            const lastCall = onRenderProgress.mock.calls[onRenderProgress.mock.calls.length - 1];
+            // Final progress report covers all 30 brushable cells (6x6 minus diagonal)
+            expect(lastCall).toEqual([30, 30]);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('paints all cells in a single frame when cells are cheap (no fixed cap, no progress noise)', async () => {
+        // Freeze performance.now(): elapsed paint time is always 0, so the
+        // time budget never exhausts and all 30 cells must land in the first
+        // frame — the old fixed 4-cells/frame cap would have forced 8 frames.
+        // Single-frame paints stay silent (no progress streaming).
+        const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(1000);
+        try {
+            const columns: Column[] = ['a', 'b', 'c', 'd', 'e', 'f'].map(name => ({
+                name,
+                scale: 'linear' as const,
+                visible: true,
+            }));
+            const data: DataPoint[] = Array.from({ length: 20 }, (_, i) => ({
+                __id: i,
+                a: i, b: i * 2, c: i * 3, d: i * 4, e: i * 5, f: i * 6,
+            }));
+
+            const onRenderComplete = vi.fn();
+            const onRenderProgress = vi.fn();
+            render(
+                <DndProvider backend={HTML5Backend}>
+                    <ScatterPlotMatrix {...makeProps({ data, columns, onRenderComplete, onRenderProgress })} />
+                </DndProvider>
+            );
+
+            await waitFor(() => expect(onRenderComplete).toHaveBeenCalled());
+            expect(onRenderProgress).not.toHaveBeenCalled();
+        } finally {
+            nowSpy.mockRestore();
+        }
     });
 
     it('repaints when a same-shape dataset replaces the data (no stale cache reuse)', async () => {

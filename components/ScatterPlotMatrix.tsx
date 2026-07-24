@@ -27,6 +27,7 @@ import { cellValueToNumber } from '../src/utils/cellValueUtils';
 import { HIDDEN_SLOT, MISSING_COLOR, MISSING_SLOT, removeHiddenIds } from '../src/utils/colorUtils';
 import type { ColorState } from '../src/utils/colorUtils';
 import { buildRenderKey } from '../src/utils/renderKeyUtils';
+import { shouldPaintAnotherCell } from '../src/utils/renderSchedule';
 import {
   getStackConfig,
   computeStackedBinCounts,
@@ -81,10 +82,10 @@ interface ScatterPlotMatrixProps {
   tintCellBorders?: boolean;
 }
 
-// RAF-budgeted canvas rendering: paint at most this many cells per frame…
-const CELLS_PER_FRAME = 4;
-// …or stop early once this much of the frame has been spent painting.
-const FRAME_BUDGET_MS = 12;
+// RAF-budgeted canvas rendering: keep painting queued cells until the frame's
+// paint budget is spent (see src/utils/renderSchedule.ts — cheap WebGL cells
+// pack many per frame, expensive cells stop the frame early, and at least one
+// cell always paints per frame so the render is guaranteed to progress).
 
 // ImageData snapshot cache: restore previously-seen (unselected) cell
 // configurations via putImageData instead of re-plotting every point.
@@ -1634,8 +1635,8 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       });
     }
 
-    // Paint the queued cells in RAF-budgeted chunks (~CELLS_PER_FRAME cells
-    // or ~FRAME_BUDGET_MS per frame), then signal completion. The scheduler
+    // Paint the queued cells in RAF-budgeted chunks (time-budget-driven via
+    // shouldPaintAnotherCell), then signal completion. The scheduler
     // is cancelable: if the config changes mid-render (or the component
     // unmounts) the effect cleanup cancels the pending frame, and because a
     // cell's render key is only recorded after a successful paint, any
@@ -1680,8 +1681,7 @@ export const ScatterPlotMatrix: React.FC<ScatterPlotMatrixProps> = ({
       let paintedThisFrame = 0;
       while (
         tasksDone < totalTasks &&
-        paintedThisFrame < CELLS_PER_FRAME &&
-        performance.now() - frameStart < FRAME_BUDGET_MS
+        shouldPaintAnotherCell(frameStart, performance.now(), paintedThisFrame)
       ) {
         const task = paintTasks[tasksDone];
         renderPointsToCanvas(
